@@ -663,6 +663,21 @@ public:
                 return;
             }
 
+            // TODO: currently batch matmul only supports for dimensions equal and less than 2
+            size_t rankA = InputRef(0).GetSampleLayout().GetRank();
+            size_t rankB = InputRef(1).GetSampleLayout().GetRank();
+            auto inputMBLayout2 = InputRef(1).GetMBLayout();
+            if (fr.IsBatchMatmul(inputMBLayout) && fr.IsBatchMatmul(inputMBLayout2) && rankA == 2 && rankB <= 2)
+            {
+                Matrix<ElemType> value = ValueFor(fr);
+                Matrix<ElemType> input0 = InputRef(0).ValueFor(fr);
+                Matrix<ElemType> input1 = InputRef(1).ValueFor(fr);
+                size_t m = m_transpose ? InputRef(0).GetSampleLayout().GetDim(1) : InputRef(0).GetSampleLayout().GetDim(0);
+                size_t n = InputRef(1).GetSampleLayout().GetDimPadded(1);
+                Matrix<ElemType>::BatchMatMul(ElemType(0.0), input0, m_transpose, m, input1, false, n, value, true);
+                return;
+            }
+
             // recursively call ourselves for each individual time and sequence
 
             // note this is not performant, warn user about the slow path being used
@@ -725,6 +740,51 @@ public:
                 }
                 return;
             }
+
+            // TODO: currently batch matmul only supports for dimensions equal and less than 2
+            ElemType beta = Input(inputIndex)->IsGradientInitializedBy(this) ? (ElemType)0.0 : (ElemType)1.0;
+            if (inputIndex == 0)
+            {
+                size_t rankA = InputRef(1).GetSampleLayout().GetRank();
+                size_t rankB = GetSampleLayout().GetRank();
+                if (fr.IsBatchMatmul(InputRef(0).GetMBLayout()) &&  fr.IsBatchMatmul(InputRef(1).GetMBLayout()) && rankA <= 2 && rankB <= 2)
+                {
+                    Matrix<ElemType> outputGradient = GradientFor(fr);
+                    Matrix<ElemType> input1 = InputRef(1).ValueFor(fr);
+                    Matrix<ElemType> input0Gradient = InputRef(0).GradientFor(fr);
+                    size_t m = m_transpose ? InputRef(1).GetSampleLayout().GetDim(0) : GetSampleLayout().GetDim(0);
+                    size_t n = m_transpose ? GetSampleLayout().GetDim(0) : InputRef(1).GetSampleLayout().GetDim(0);
+                    if (!m_transpose)
+                        Matrix<ElemType>::BatchMatMul(beta, outputGradient, false, n, input1, true, m, input0Gradient, true);
+                    else
+                        Matrix<ElemType>::BatchMatMul(beta, input1, false, m, outputGradient, true, n, input0Gradient, true);
+                    return;
+                }
+            }
+            else if (inputIndex == 1)
+            {
+                size_t rankA = InputRef(0).GetSampleLayout().GetRank();
+                size_t rankB = GetSampleLayout().GetRank();
+                if (fr.IsBatchMatmul(InputRef(0).GetMBLayout()) &&  fr.IsBatchMatmul(InputRef(1).GetMBLayout()) && rankA == 2 && rankB <= 2)
+                {
+                    Matrix<ElemType> input0 = InputRef(0).ValueFor(fr);
+                    Matrix<ElemType> input1Gradient = InputRef(1).GradientFor(fr);
+                    Matrix<ElemType> outputGradient = GradientFor(fr);
+                    size_t m = m_transpose ? InputRef(0).GetSampleLayout().GetDim(0) : InputRef(0).GetSampleLayout().GetDim(1);
+                    size_t n = GetSampleLayout().GetDimPadded(1);
+                    if (input1Gradient.GetMatrixType() == SPARSE)
+                    {
+                        input1Gradient.SwitchToMatrixType(DENSE, matrixFormatDense, !Input(inputIndex)->IsGradientInitializedBy(this));
+                    }
+                    InputRef(1).SetPreferredGradientMatrixType(DENSE);
+
+                    Matrix<ElemType>::BatchMatMul(ElemType(0.0), input0, !m_transpose, m, outputGradient, false, n, input1Gradient, true);
+                }
+            }
+
+            // note this is not performant, warn user about the slow path being used
+            if (Base::HasEnvironmentPtr() && Base::Environment().traceLevel > 0)
+                std::call_once(m_unrollWarningOnceFlag, [this] { fprintf(stderr, "WARNING: %ls %ls operation: being unrolled in backprop, execution may be slow\n", NodeName().c_str(), OperationName().c_str()); });
 
             auto timeRange     = fr.GetTimeRange();
             auto sequenceRange = fr.GetSequenceRange();
