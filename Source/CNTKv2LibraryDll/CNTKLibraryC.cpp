@@ -25,9 +25,8 @@ namespace
     static CNTK_StatusCode StatusCode(int32_t code, const string& message)
     {
         CNTK_StatusCode result{ code, {0} };
-        wstring value(message.begin(), message.end());
-        auto size = min((uint32_t)(value.size() + 1), CNTK_STATUSCODE_DescriptionSize - 1);
-        copy(value.c_str(), value.c_str() + size, result.description);
+        auto size = min((uint32_t)(message.size() + 1), CNTK_STATUSCODE_DescriptionSize - 1);
+        copy(message.c_str(), message.c_str() + size, result.description);
         return result;
     }
 
@@ -61,7 +60,39 @@ namespace
     };
 }
 
-CNTK_StatusCode CNTK_LoadModel(const wchar_t* modelFilePath, const wchar_t* device, CNTK_ModelHandle* handle)
+CNTK_StatusCode CNTK_DefaultDevice(CNTK_DeviceDescriptor* device)
+{
+    if (!device)
+        return StatusCode(CNTK_ERROR_NULL_POINTER, "'device' parameter is not allowed to be null");
+
+    return ExceptionCatcher::Call([&]() {
+        auto d = DeviceDescriptor::UseDefaultDevice();
+        device->id = d.Id();
+        device->kind = (d.Type() == DeviceKind::GPU ? CNTK_DeviceKind::CNTK_DeviceKind_GPU : CNTK_DeviceKind::CNTK_DeviceKind_CPU);
+    });
+}
+
+CNTK_StatusCode CNTK_AllDevices(CNTK_DeviceDescriptor** devices, uint32_t* size)
+{
+    if (!devices)
+        return StatusCode(CNTK_ERROR_NULL_POINTER, "'devices' parameter is not allowed to be null");
+
+    if (!size)
+        return StatusCode(CNTK_ERROR_NULL_POINTER, "'size' parameter is not allowed to be null");
+
+    return ExceptionCatcher::Call([&]() {
+        auto all = DeviceDescriptor::AllDevices();
+        *devices = new CNTK_DeviceDescriptor[all.size()];
+        for (size_t i = 0; i < all.size(); ++i)
+        {
+            (*devices)[i].id = all[i].Id();
+            (*devices)[i].kind = all[i].Type() == DeviceKind::GPU ? CNTK_DeviceKind::CNTK_DeviceKind_GPU : CNTK_DeviceKind::CNTK_DeviceKind_CPU;
+        }
+        *size = static_cast<uint32_t>(all.size());
+    });
+}
+
+CNTK_StatusCode CNTK_LoadModel(const char* modelFilePath, const CNTK_DeviceDescriptor* device, CNTK_ModelHandle* handle)
 {
     if (!handle)
         return StatusCode(CNTK_ERROR_NULL_POINTER, "'handle' parameter is not allowed to be null");
@@ -69,11 +100,24 @@ CNTK_StatusCode CNTK_LoadModel(const wchar_t* modelFilePath, const wchar_t* devi
     if (!modelFilePath)
         return StatusCode(CNTK_ERROR_NULL_POINTER, "'modelFilePath' parameter is not allowed to be null");
 
-    if (!device)
-        return StatusCode(CNTK_ERROR_NULL_POINTER, "'device' parameter is not allowed to be null");
-
     *handle = nullptr;
     return ExceptionCatcher::Call([&]() { *handle = new CNTKEvaluatorWrapper(modelFilePath, device); });
+}
+
+CNTK_StatusCode CNTK_LoadModel_FromArray(const void* modelData, int modelDataLen,
+                                         const CNTK_DeviceDescriptor* device, CNTK_ModelHandle* handle)
+{
+    if (!handle)
+        return StatusCode(CNTK_ERROR_NULL_POINTER, "'handle' parameter is not allowed to be null");
+
+    if (!modelData)
+        return StatusCode(CNTK_ERROR_NULL_POINTER, "'modelData' parameter is not allowed to be null");
+
+    if (modelDataLen <= 0)
+        return StatusCode(CNTK_ERROR_INVALID_INPUT, "'modelDataLen' parameter must be greater than zero");
+
+    *handle = nullptr;
+    return ExceptionCatcher::Call([&]() { *handle = new CNTKEvaluatorWrapper(modelData, modelDataLen, device); });
 }
 
 CNTK_StatusCode CNTK_CloneModel(CNTK_ModelHandle model, CNTK_ParameterCloningMethod method, bool flatten, CNTK_ModelHandle* cloned)

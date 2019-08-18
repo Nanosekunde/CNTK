@@ -19,6 +19,15 @@
 #define CNTK_API
 #endif
 
+//
+// We can't have name-mangling for the plain C API, thus the extern "C" is required.
+// The exported functions have "CNTK_" prefixes because we can't use a namespace here.
+//
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 typedef void* CNTK_ModelHandle;
 
 #define CNTK_STATUSCODE_DescriptionSize 4096u
@@ -26,7 +35,7 @@ typedef void* CNTK_ModelHandle;
 typedef struct CNTK_StatusCode
 {
     int32_t value;
-    wchar_t description[CNTK_STATUSCODE_DescriptionSize];
+    char description[CNTK_STATUSCODE_DescriptionSize];
 } CNTK_StatusCode;
 
 //
@@ -52,13 +61,39 @@ typedef struct CNTK_StatusCode
 #define CNTK_INVALID_MODEL_HANDLE 0
 
 //
-// We can't have name-mangling for the plain C API, thus the extern "C" is required.
-// The exported functions have "CNTK_" prefixes because we can't use a namespace here.
+// Device kind.
 //
-#ifdef __cplusplus
-extern "C"
+typedef enum CNTK_DeviceKind
 {
-#endif
+    CNTK_DeviceKind_CPU,
+    CNTK_DeviceKind_GPU,
+} CNTK_DeviceKind;
+
+//
+// Device desciptor.
+//
+typedef struct CNTK_DeviceDescriptor
+{
+    CNTK_DeviceKind kind;
+    uint32_t id; // CUDA device id, in case of GPU, always 0 for CPU.
+} CNTK_DeviceDescriptor;
+
+//
+// Returns all available devices.
+//
+// Parameters:
+//     devices [in/out]: list of devices.
+//     size[out]: size of the list.
+//
+CNTK_API CNTK_StatusCode CNTK_AllDevices(
+    /*[out]*/ CNTK_DeviceDescriptor** devices,
+    /*[out]*/ uint32_t* size);
+
+//
+// Returns default device.
+//
+CNTK_API CNTK_StatusCode CNTK_DefaultDevice(
+    /*[in/out]*/ CNTK_DeviceDescriptor* device);
 
 //
 // Loads a model from the specified file and returns an opaque handle to the model
@@ -66,12 +101,28 @@ extern "C"
 //
 // Parameters:
 //     modelFilePath [in]: a null-terminated path to a CNTK model file
-//     device [in]: a null-terminated string containing device name, currently only "cpu" is supported.
+//     device [in]: device descriptor.
 //     model [out]: the resulting loaded model
 //
 CNTK_API CNTK_StatusCode CNTK_LoadModel(
-    /*[in]*/ const wchar_t* modelFilePath,
-    /*[in]*/ const wchar_t* device,
+    /*[in]*/ const char* modelFilePath,
+    /*[in]*/ const CNTK_DeviceDescriptor* device,
+    /*[out]*/ CNTK_ModelHandle* model);
+
+//
+// Loads a model from the specified buffer and returns an opaque handle to the model
+// that should be passed to further operations.
+//
+// Parameters:
+//     modelData [in]: a buffer that holds the CNTK model
+//     modelDataLen [in]: the length of the buffer
+//     device [in]: device descriptor
+//     model [out]: the resulting loaded model
+//
+CNTK_StatusCode CNTK_LoadModel_FromArray(
+    /*[in]*/ const void* modelData,
+    /*[in]*/ int modelDataLen,
+    /*[in]*/ const CNTK_DeviceDescriptor* device,
     /*[out]*/ CNTK_ModelHandle* model);
 
 enum CNTK_ParameterCloningMethod
@@ -132,7 +183,7 @@ typedef struct CNTK_Shape
 //
 typedef struct CNTK_Variable
 {
-    wchar_t* name;     // A null terminating name of the variable
+    char* name;     // A null terminating name of the variable
     CNTK_Shape shape;  // Variable shape
 } CNTK_Variable;
 

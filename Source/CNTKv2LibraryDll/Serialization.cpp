@@ -17,7 +17,7 @@
 #endif
 
 #pragma warning(push)
-#pragma warning(disable : 4800 4267 4610 4512 4100 4510)
+#pragma warning(disable : 4800 4267 4610 4512 4100 4510 4505)
 #include "CNTK.pb.h"
 #include <google/protobuf/io/zero_copy_stream_impl.h>
 #include <google/protobuf/arena.h>
@@ -138,7 +138,7 @@ namespace CNTK
         proto::NDShape* CreateProto(const NDShape& src, Arena* arena = nullptr);
 
         void Copy(const DictionaryValue& src, proto::DictionaryValue& dst, Arena* arena = nullptr);
-        
+
         void CopyNDArrayViewDataToProtos();
         void WriteNDArrayViewData(io::CodedOutputStream& output);
 
@@ -158,7 +158,7 @@ namespace CNTK
 
         bool ReadNDArrayViewData(io::ZeroCopyInputStream& input);
 
-        size_t GetTotalByteSize() 
+        size_t GetTotalByteSize()
         {
             return m_byteSize + m_proto->ByteSizeLong();
         }
@@ -231,13 +231,36 @@ namespace CNTK
             return DictionaryValue::Type(type);
         }
 
-        template <typename T>
-        static void CopyData(const NDArrayView& src, RepeatedField<T>* dst)
+        template <typename SrcT, typename DstT = SrcT>
+        static void CopyData(const NDArrayView& src, RepeatedField<DstT>* dst)
         {
             auto size = src.Shape().TotalSize();
-            dst->Resize((int)size, T());
-            const T* buffer = src.DataBuffer<T>();
-            memcpy(dst->mutable_data(), buffer, (int)size * sizeof(T));
+            dst->Resize((int)size, DstT());
+            const SrcT* buffer = src.DataBuffer<SrcT>();
+            if (std::is_same<SrcT, DstT>::value)
+                memcpy(dst->mutable_data(), buffer, (int)size * sizeof(DstT));
+            else
+                for (size_t i = 0; i < size; i++)
+                    dst->mutable_data()[i] = (DstT)buffer[i];
+        }
+
+        static void WriteInt8Data(const NDArrayView& src, io::CodedOutputStream& output)
+        {
+            // Write raw bytes.
+            auto size = src.Shape().TotalSize();
+            const int8_t* buffer = src.DataBuffer<int8_t>();
+            output.WriteRaw(buffer, size);
+        }
+
+        static void WriteInt16Data(const NDArrayView& src, io::CodedOutputStream& output)
+        {
+            auto size = src.Shape().TotalSize();
+            const int16_t* buffer = src.DataBuffer<int16_t>();
+            for (auto i = 0; i < size; i++)
+            {
+                auto value = buffer[i];
+                output.WriteVarint32SignExtended(Encode<int16_t, int16_t>(value));
+            }
         }
 
         template <typename T>
@@ -250,35 +273,76 @@ namespace CNTK
             {
                 auto value = buffer[i];
                 if (tSize <= sizeof(uint32))
-                    output.WriteLittleEndian32(Encode<T, uint32>(value));
-                else 
+                {
+                    output.WriteLittleEndian32(Encode<T, uint32>((float)value));
+                }
+                else
+                {
                     output.WriteLittleEndian64(Encode<T, uint64>(value));
+                }
             }
         }
 
-        template <typename T>
+        template <typename SrcT, typename DstT = SrcT>
         static bool ReadData(RenewableCodedStream& input, NDArrayView& dst)
         {
             auto size = dst.Shape().TotalSize();
-            T* buffer = dst.WritableDataBuffer<T>();
+            DstT* buffer = dst.WritableDataBuffer<DstT>();
             for (auto i = 0; i < size; i++)
             {
-                if (!input.Read<T>(buffer+i))
+                SrcT value;
+                if (!input.Read<SrcT>(&value))
                     return false;
+                buffer[i] = (DstT)value;
             }
             return true;
         }
 
-        template <typename T>
-        static void CopyData(const RepeatedField<T>& src, NDArrayView* dst)
+        static bool ReadInt8Data(io::ZeroCopyInputStream& input, NDArrayView& dst)
+        {
+            const void* temp;
+            int readSize;
+            size_t totalSize = 0;
+            bool success;
+            do {
+                success = input.Next(&temp, &readSize);
+                totalSize += readSize;
+            } while (success && readSize == 0);
+
+            if (!success)
+                return false;
+            
+            auto size = dst.Shape().TotalSize();
+            if (totalSize != size)
+                return false;
+
+            int8_t* buffer = dst.WritableDataBuffer<int8_t>();
+            memcpy(buffer, temp, size);
+            return true;
+        }
+
+        template <typename SrcT, typename DstT = SrcT>
+        static void CopyData(const RepeatedField<SrcT>& src, NDArrayView* dst)
         {
             auto size = src.size();
             assert(size == dst->Shape().TotalSize());;
-            T* buffer = dst->WritableDataBuffer<T>();
-            memcpy(buffer, src.data(), size * sizeof(T));
+            DstT* buffer = dst->WritableDataBuffer<DstT>();
+            if (std::is_same<SrcT, DstT>::value)
+                memcpy(buffer, src.data(), size * sizeof(SrcT));
+            else
+            {
+                for (size_t i = 0; i < size; i++)
+                    buffer[i] = (DstT)src.data()[i];
+            }
         }
 
-        
+        static void CopyInt8Data(const std::string& src, NDArrayView* dst)
+        {
+            auto size = src.length();
+            assert(size == dst->Shape().TotalSize());
+            auto* buffer = dst->WritableDataBuffer<int8_t>();
+            memcpy(buffer, src.data(), size * sizeof(int8_t));
+        }
 
         UsingUTF8 m_locale;
         Arena m_arena;
@@ -312,6 +376,21 @@ namespace CNTK
             {
                 CopyData<double>(src, dst->mutable_double_values()->mutable_value());
             }
+            else if (src.GetDataType() == DataType::Float16)
+            {
+                CopyData<float16, float>(src, dst->mutable_float_values()->mutable_value());
+            }
+            else if (src.GetDataType() == DataType::Int8)
+            {
+                // Directly copy the data as a byte array.
+                auto size = src.Shape().TotalSize();
+                const int8_t* buffer = src.DataBuffer<int8_t>();
+                dst->mutable_bytes_value()->set_value(buffer, size);
+            }
+            else if (src.GetDataType() == DataType::Int16)
+            {
+               CopyData<int16_t, int32>(src, dst->mutable_sint32_values()->mutable_value());
+            }
         }
     }
 
@@ -327,6 +406,18 @@ namespace CNTK
             else if (src.GetDataType() == DataType::Double)
             {
                 WriteData<double>(src, output);
+            }
+            else if (src.GetDataType() == DataType::Float16)
+            {
+                WriteData<float16>(src, output);
+            }
+            else if (src.GetDataType() == DataType::Int8)
+            {
+                WriteInt8Data(src, output);
+            }
+            else if (src.GetDataType() == DataType::Int16)
+            {
+                WriteInt16Data(src, output);
             }
         }
     }
@@ -348,7 +439,22 @@ namespace CNTK
             else if (dst.GetDataType() == DataType::Double)
             {
                 if (!ReadData<double>(wrapper, dst))
-                    return false;                
+                    return false;
+            }
+            else if (dst.GetDataType() == DataType::Float16)
+            {
+                if (!ReadData<float, float16>(wrapper, dst))
+                    return false;
+            }
+            else if (dst.GetDataType() == DataType::Int8)
+            {
+                if (!ReadInt8Data(input, dst))
+                    return false;
+            }
+            else if (dst.GetDataType() == DataType::Int16)
+            {
+                if (!ReadData<int16_t, int16_t>(wrapper, dst))
+                     return false;
             }
         }
         return true;
@@ -383,7 +489,7 @@ namespace CNTK
         proto::Axis* dst = (arena != nullptr) ? 
             Arena::CreateMessage<proto::Axis>(arena) : new proto::Axis();
         dst->set_static_axis_idx(src.StaticAxisIndex(false));
-        dst->set_name(ToString(src.Name()));
+        dst->set_name(Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(src.Name())));
         dst->set_is_ordered_dynamic_axis(src.IsOrdered());
         return dst;
     }
@@ -396,7 +502,7 @@ namespace CNTK
         }
         else
         {
-            return new Axis(ToWString(src.name()), src.is_ordered_dynamic_axis());
+            return new Axis(Microsoft::MSR::CNTK::ToFixedWStringFromMultiByte(src.name()), src.is_ordered_dynamic_axis());
         }
     }
 
@@ -446,6 +552,27 @@ namespace CNTK
             else
                 m_arrayViews.push_back({ dst, nullptr });
         }
+        else if(dataType == DataType::Float16)
+        {
+            if (src.float_values().value().size() == shape->TotalSize())
+                CopyData<float, float16>(src.float_values().value(), dst);
+            else
+                m_arrayViews.push_back({ dst, nullptr });
+        }
+        else if (dataType == DataType::Int8)
+        {
+            if (src.bytes_value().value().size() == shape->TotalSize())
+                CopyInt8Data(src.bytes_value().value(), dst);
+            else
+                m_arrayViews.push_back({ dst, nullptr });
+        }
+        else if (dataType == DataType::Int16)
+        {
+            if (src.sint32_values().value().size() == shape->TotalSize())
+                 CopyData<int32, int16_t>(src.sint32_values().value(), dst);
+            else
+                 m_arrayViews.push_back({ dst, nullptr });
+        }
         return dst;
     }
 
@@ -478,7 +605,7 @@ namespace CNTK
         dst->set_version(src.s_version);
         for (const auto& kv : src)
         {
-            Copy(kv.second, dst->mutable_data()->operator[](ToString(kv.first)), arena);
+            Copy(kv.second, dst->mutable_data()->operator[](Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(kv.first))), arena);
         }
         return dst;
     }
@@ -488,7 +615,7 @@ namespace CNTK
         Dictionary* dst = new Dictionary();
         for (const auto& kv : src.data())
         {
-            Copy(kv.second, dst->operator[](ToWString(kv.first)));
+            Copy(kv.second, dst->operator[](Microsoft::MSR::CNTK::ToFixedWStringFromMultiByte(kv.first)));
         }
         return dst;
     }
@@ -527,7 +654,7 @@ namespace CNTK
             dst.set_double_value(src.Value<double>());
             break;
         case DictionaryValue::Type::String:
-            dst.set_string_value(ToString(src.Value<std::wstring>()));
+            dst.set_string_value(Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(src.Value<std::wstring>())));
             break;
         case DictionaryValue::Type::NDShape:
             dst.set_allocated_nd_shape_value(CreateProto(src.Value<NDShape>(), arena));
@@ -554,7 +681,7 @@ namespace CNTK
         dst.m_dictionaryData->reserve(src.data_size());
         for (const auto& kv : src.data())
         {
-            Serializer::Copy(kv.second, dst[ToWString(kv.first)]);
+            Serializer::Copy(kv.second, dst[Microsoft::MSR::CNTK::ToFixedWStringFromMultiByte(kv.first)]);
         }
     }
 
@@ -588,7 +715,7 @@ namespace CNTK
             dst.m_data.m_double = src.double_value();
             break;
         case proto::DictionaryValue::String:
-            dst.m_data.m_ptr = new std::wstring(ToWString(src.string_value()));
+            dst.m_data.m_ptr = new std::wstring(Microsoft::MSR::CNTK::ToFixedWStringFromMultiByte(src.string_value()));
             break;
         case proto::DictionaryValue::NDShape:
             dst.m_data.m_ptr = CreateFromProto(src.nd_shape_value());
@@ -683,7 +810,6 @@ namespace CNTK
 
         io::CodedInputStream codedInput(&input);
         codedInput.SetTotalBytesLimit(limit, limit);
-
         return msg.ParseFromCodedStream(&codedInput) && codedInput.ConsumedEntireMessage();
     }
 

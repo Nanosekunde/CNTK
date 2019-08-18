@@ -41,9 +41,6 @@ def test_convnet_cifar_error(device_id):
     expected_error = 0.7
     assert np.allclose(error, expected_error, atol=TOLERANCE_ABSOLUTE)
 
-python34_only = pytest.mark.skipif(sys.version_info[:2] != (3,4), reason="requires python 3.4")
-
-@python34_only
 def test_check_percentages_after_restarting_training(device_id):
     if cntk_device(device_id).type() != DeviceKind_GPU:
         pytest.skip('test only runs on GPU')
@@ -82,7 +79,7 @@ def test_check_percentages_after_restarting_training(device_id):
 
     # Restarting training
     out = subprocess.check_output(cmdStr.split(" "), stderr=subprocess.STDOUT)
-    all_percentages = re.findall('.* Epoch\[ *\d+ of \d+]-Minibatch\[ *\d+- *\d+, *(\d+\.\d+)\%\].*', out.decode('utf-8'))
+    all_percentages = re.findall(r'.* Epoch\[ *\d+ of \d+]-Minibatch\[ *\d+- *\d+, *(\d+\.\d+)\%\].*', out.decode('utf-8'))
 
     expected_percentages = set(["14.29", "28.57", "57.14", "42.86", "71.43", "85.71", "100.00"])
     assert set(all_percentages) == expected_percentages

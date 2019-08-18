@@ -4,13 +4,14 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 
 namespace CNTK.CSTrainingExamples
 {
     /// <summary>
     /// This class demonstrates transfer learning use a pretrained ResNet model. 
     /// Refer to https://github.com/Microsoft/CNTK/blob/master/Tutorials/CNTK_301_Image_Recognition_with_Deep_Transfer_Learning.ipynb
-    /// for tranfer learning in general, and ResNet model, data used for training. 
+    /// for transfer learning in general, and ResNet model, data used for training. 
     /// </summary>
     public class TransferLearning
     {
@@ -21,24 +22,28 @@ namespace CNTK.CSTrainingExamples
         /// data folder is: CNTK/Examples/Image
         /// model folder is: CNTK/PretrainedModels
         /// </summary>
-        public static string ExampleImageFoler = "../../Examples/Image/DataSets";
-        public static string BaseResnetModelFile = "../../PretrainedModels/ResNet18_ImageNet_CNTK.model";
+        public static string ExampleImageFolder
+        {
+            get { return TestCommon.TestDataDirPrefix; }
+            set { TestCommon.TestDataDirPrefix = value; }
+        }
+
+        public static string BaseResnetModelFile = TestCommon.TestDataDirPrefix + "/ResNet18_ImageNet_CNTK.model";
 
         private static string featureNodeName = "features";
         private static string lastHiddenNodeName = "z.x";
         private static int[] imageDims = new int[] { 224, 224, 3 };
-
         /// <summary>
         /// TrainAndEvaluateWithFlowerData shows how to do transfer learning with a MinibatchSource. MinibatchSource is constructed with 
-        /// a map file that contains image file paths and labels. Data loading, image preprocessing, and batch ramdomization are handled 
+        /// a map file that contains image file paths and labels. Data loading, image preprocessing, and batch randomization are handled 
         /// by MinibatchSource.
         /// </summary>
         /// <param name="device">CPU or GPU device to run</param>
-        /// <param name="forceRetrain">Force to train the model if true. If false, 
+        /// <param name="forceReTrain">Force to train the model if true. If false, 
         /// it only evaluates the model is it exists. </param>
         public static void TrainAndEvaluateWithFlowerData(DeviceDescriptor device, bool forceReTrain = false)
         {
-            string flowerFolder = Path.Combine(ExampleImageFoler, "Flowers");
+            string flowerFolder = Path.Combine(ExampleImageFolder, "Flowers");
             string flowersTrainingMap = Path.Combine(flowerFolder, "1k_img_map.txt");
             string flowersValidationMap = Path.Combine(flowerFolder, "val_map.txt");
             int flowerModelNumClasses = 102;
@@ -64,7 +69,7 @@ namespace CNTK.CSTrainingExamples
             Function trainingLoss, predictionError;
 
             // create a transfer model
-            Function transferLearningModel = CreateTransferLearningModel(BaseResnetModelFile, featureNodeName,
+            Function transferLearningModel = CreateTransferLearningModel(Path.Combine(ExampleImageFolder, BaseResnetModelFile), featureNodeName,
                 predictionNodeName, lastHiddenNodeName, flowerModelNumClasses, device,
                 out imageInput, out labelInput, out trainingLoss, out predictionError);
 
@@ -119,7 +124,7 @@ namespace CNTK.CSTrainingExamples
         /// it only evaluates the model is it exists. </param>
         public static void TrainAndEvaluateWithAnimalData(DeviceDescriptor device, bool forceRetrain = false)
         {
-            string animalDataFolder = Path.Combine(ExampleImageFoler, "Animals");
+            string animalDataFolder = Path.Combine(ExampleImageFolder, "Animals");
             string[] animals = new string[] { "Sheep", "Wolf" };
             int animalModelNumClasses = 2;
             string animalsModelFile = Path.Combine(CurrentFolder, "AnimalsTransferLearning.model");
@@ -139,7 +144,7 @@ namespace CNTK.CSTrainingExamples
             string predictionNodeName = "prediction";
             Variable imageInput, labelInput;
             Function trainingLoss, predictionError;
-            Function transferLearningModel = CreateTransferLearningModel(BaseResnetModelFile, featureNodeName, predictionNodeName,
+            Function transferLearningModel = CreateTransferLearningModel(Path.Combine(ExampleImageFolder, BaseResnetModelFile), featureNodeName, predictionNodeName,
                 lastHiddenNodeName, animalModelNumClasses, device,
                 out imageInput, out labelInput, out trainingLoss, out predictionError);
 
@@ -373,7 +378,7 @@ namespace CNTK.CSTrainingExamples
                 if (totalCount > maxCount)
                     break;
 
-                // expected lables are in the minibatch data.
+                // expected labels are in the minibatch data.
                 var labelData = minibatchData[labelStreamInfo].data.GetDenseData<float>(labelOutput);
                 var expectedLabels = labelData.Select(l => l.IndexOf(l.Max())).ToList();
 

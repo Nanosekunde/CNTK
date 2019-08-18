@@ -3,9 +3,14 @@
 // Licensed under the MIT license. See LICENSE.md file in the project root for full license information.
 //
 
+#include "core/graph/graph.h"
+
 #include "Operators.h"
-#include "proto/onnx/core/graph.h"
 #include "Utils.h"
+
+int BatchSizeProcessor::overrideBatchSize = BatchSizeProcessor::defaultFreeBatchSize;
+size_t BatchSizeProcessor::overrideSequenceSize = CNTK::NDShape::FreeDimension;
+
 
 namespace CNTK
 {
@@ -32,6 +37,12 @@ namespace ONNX
         { L"Pooling",  { {
             { L"Pooling",  "MaxPool" },
             { L"poolingWindowShape", "kernel_shape" },
+            { L"strides", "strides" },
+            { L"autoPadding", "pads" },
+        } } },
+        { L"Unpooling", { {
+            { L"Unpooling", "MaxUnpool" },
+            { L"unpoolingWindowShape", "kernel_shape" },
             { L"strides", "strides" },
             { L"autoPadding", "pads" },
         } } },
@@ -70,7 +81,7 @@ namespace ONNX
             { L"epsilon", "epsilon" },
             // { L"", "momentum" },
         } } },
-        // from ONNX experiament, added to test Caffe models
+        // from ONNX experiment, added to test Caffe models
         // TODO: set key as BatchNormalization instead of BatchNormalizationCaffe
         { L"BatchNormalizationCaffe",{ {
             { L"BatchNormalization", "SpatialBN" },
@@ -78,7 +89,20 @@ namespace ONNX
             // { L"", "is_test" },
             { L"epsilon", "epsilon" },
             // { L"", "momentum" },
-            } } },
+        } } },
+        { L"OptimizedRNNStack",{ {
+            { L"OptimizedRNNStack", "OptimizedRNNStack" },
+            { L"hidden_size", "hidden_size" },
+            { L"num_layers", "num_layers" },
+            { L"bidirectional", "bidirectional" },
+            { L"recurrent_op", "recurrent_op" },
+        } } },
+        { L"LayerNormalization",{ {
+            { L"LayerNormalization", "LayerNormalization" },
+            { L"initial_scale", "initial_scale" },
+            { L"initial_bias", "initial_bias" },
+            { L"epsilon", "epsilon" },
+        } } },
         { L"LocalResponseNormalization",{ {
             { L"LocalResponseNormalization", "LRN" },
             { L"size", "size" },
@@ -102,6 +126,7 @@ namespace ONNX
         // From Generator
         { L"RandomDistribution", { {
             { L"UniformRandom", "RandomUniform" },
+            { L"uniform", "RandomUniform" },
             // { L"", "low" },
             // { L"", "high" },
             { L"rngSeed", "seed" },
@@ -109,6 +134,7 @@ namespace ONNX
         } } },
         { L"RandomDistribution", { {
             { L"NormalRandom", "RandomNormal" },
+            { L"normal", "RandomNormal" },
             // { L"", "mean" },
             // { L"", "scale" },
             { L"rngSeed", "seed" },
@@ -193,7 +219,7 @@ namespace ONNX
         } } },
         { L"ELU", { {
             { L"ELU", "Elu" },
-            // { L"", "alpha" },
+            { L"alpha", "alpha" },
         } } },
         { L"Exp", { {
             { L"Exp", "Exp" },
@@ -216,6 +242,9 @@ namespace ONNX
         } } },
         { L"StableSigmoid", { {
             { L"StableSigmoid", "Sigmoid" },
+        } } },
+        { L"Sigmoid", { {
+            { L"Sigmoid", "Sigmoid" },
         } } },
         { L"ElementMax", { {
             { L"ElementMax", "Max" },
@@ -240,6 +269,18 @@ namespace ONNX
             { L"LogSoftmax", "LogSoftmax" },
             { L"axis", "axis" },
         } } },
+        { L"Hardmax_onnx",{ {
+            { L"Hardmax_onnx", "Hardmax" },
+            { L"axis", "axis" },
+        } } },
+        { L"Softmax_onnx",{ {
+            { L"Softmax_onnx", "Softmax" },
+            { L"axis", "axis" },
+        } } },
+        { L"LogSoftmax_onnx",{ {
+            { L"LogSoftmax_onnx", "LogSoftmax" },
+            { L"axis", "axis" },
+        } } },
         { L"Softplus",{ {
             { L"Softplus", "Softplus" },
         } } },
@@ -260,6 +301,24 @@ namespace ONNX
             { L"Less", "Less" }, 
             { L"axis ", "axis" }, 
             { L"broadcast", "broadcast" }, 
+        } } },
+        { L"Cos",{ {
+            { L"Cos", "Cos" },
+            } } },
+        { L"Sin",{ {
+            { L"Sin", "Sin" },
+        } } },
+        { L"Tan",{ {
+            { L"Tan", "Tan" },
+            } } },
+        { L"Acos",{ {
+            { L"Acos", "Acos" },
+        } } },
+        { L"Asin",{ {
+            { L"Asin", "Asin" },
+        } } },
+        { L"Atan",{ {
+            { L"Atan", "Atan" },
         } } },
 
         // From reduction
@@ -318,9 +377,17 @@ namespace ONNX
             { L"axis", "axes" },
             { L"keepdims", "keepdims" },
         } } },
+        { L"Sequence::ReduceElements",{ {
+            { L"Sequence::ReduceElements", "ReduceSum" },
+            { L"axisVec", "axes" },
+            { L"reductionKeepDimensions", "keepdims" },
+        } } },
 
         // From tensor
-        // { L"", "Cast" },
+        { L"Cast", { {
+            { L"Cast", "Cast" },
+            { L"newDataType", "to" },
+            } } },
         { L"Splice", { {
             { L"Splice", "Concat" },
             { L"axis", "axis" },
@@ -344,6 +411,7 @@ namespace ONNX
             } } },
         { L"Gather", { {
             { L"Gather", "Gather" },
+            { L"axis", "axis" },
         } } },
         { L"DepthToSpace",{ {
             { L"DepthToSpace", "DepthToSpace" },
@@ -354,6 +422,74 @@ namespace ONNX
         { L"Squeeze",{ {
             { L"Squeeze", "Squeeze" },
             { L"axes", "axes" },
+        } } },
+        { L"ImageScaler",{ {
+            { L"ImageScaler", "ImageScaler" },
+            } } },
+        { L"MeanVarianceNormalization",{ {
+            { L"MeanVarianceNormalization", "MeanVarianceNormalization" },
+            { L"useStatsAcrossChannels", "across_channels" },
+            { L"doVarianceScaling", "normalize_variance" },
+            } } },
+        { L"Embedding",{ {
+            { L"Embedding", "Gather" },
+            } } },
+        { L"NoOp",{ {
+            { L"NoOp", "Identity" },
+            } } },
+        { L"Alias",{ {
+            { L"Alias", "Identity" },
+        } } },
+        { L"UnpackBatchAxis",{ {
+            { L"UnpackBatchAxis", "Identity" },
+        } } },
+        { L"ToBatchAxis",{ {
+            { L"ToBatchAxis", "Identity" },
+        } } },
+        { L"UnpackSequenceOp",{ {
+            { L"UnpackSequenceOp", "Identity" },
+        } } },
+        { L"ToSequenceOp",{ {
+            { L"ToSequenceOp", "Identity" },
+        } } },
+        { L"StopGradient",{ {
+            { L"StopGradient", "Identity" },
+            } } },
+        { L"Gemm",{ {
+            { L"Gemm", "Gemm" },
+        } } },
+        { L"MatMul",{ {
+            { L"MatMul", "MatMul" },
+        } } },
+        { L"Unsqueeze",{ {
+            { L"Unsqueeze", "Unsqueeze" },
+        } } },
+        { L"TopK",{ {
+            { L"TopK", "TopK" },
+            { L"axis", "axis" },
+            { L"numItems", "k" },
+        } } },
+        { L"Sequence::Softmax",{ {
+            { L"Sequence::Softmax", "Softmax" },
+        } } },
+        { L"StraightThrough",{ {
+            { L"StraightThrough", "StraightThrough" },
+        } } },
+        { L"LogPlus",{ {
+            { L"LogPlus", "LogPlus" },
+        } } },
+        { L"Crop", { {
+            { L"Crop", "Crop"},
+            { L"offset", "border"},
+        } } },
+        { L"OneHotOp", { {
+            { L"OneHotOp", "OneHot"},
+        } } },
+        { L"EyeLikeOp",{ {
+            { L"EyeLikeOp", "EyeLike" },
+        } } },
+        { L"ConstantOp",{ {
+            { L"ConstantOp", "ConstantOfShape" },
         } } },
     };
 
@@ -369,22 +505,69 @@ namespace ONNX
         if (itNodeFn == _cntkToONNXOpName.end())
         {
             LogicError("Cannot map to ONNX op from CNTK ReduceElements operation: %s / %s",
-                ToString(cntkOpName).c_str(), ToString(cntkAttributeOpName).c_str());
+                       Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(cntkOpName)).c_str(), Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(cntkAttributeOpName)).c_str());
         }
 
         return itNodeFn->second;
     }
 
+    std::tuple<int, int> Operators::GetElementWiseInputIndices(const std::wstring& opName)
+    {
+        if (!SupportBroadcast(opName))
+        {
+            LogicError("Calling GitElementWiseInputIndices with invalid op: %s", Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(opName)).c_str());
+        }
+
+        int index0 = 0;
+        while (!IsValidInputs(opName, index0))
+        {
+            index0++;
+        }
+
+        int index1 = index0 + 1;
+        while (!IsValidInputs(opName, index1))
+        {
+            index1++;
+        }
+
+        return make_tuple(index0, index1);
+    }
     bool Operators::SupportBroadcast(const std::wstring& cntkOpName)
     {
         return (cntkOpName == L"Plus") || (cntkOpName == L"Minus") ||
             (cntkOpName == L"ElementTimes") || (cntkOpName == L"ElementDivide") ||
-            (cntkOpName == L"And") || (cntkOpName == L"Or") || (cntkOpName == L"Xor");
+            (cntkOpName == L"And") || (cntkOpName == L"Or") || (cntkOpName == L"Xor") ||
+            (cntkOpName == L"Splice");
     }
-        std::unordered_map<std::wstring, std::set<size_t>> Operators::_cntkBlockOPInvalidIndices = {
+
+    bool Operators::SupportBroadcastONNXOp(const std::string& onnxOpName)
+    {
+        return (onnxOpName == "Add") || (onnxOpName == "Sub") ||
+            (onnxOpName == "Mul") || (onnxOpName == "Div") ||
+            (onnxOpName == "And") || (onnxOpName == "Or") || (onnxOpName == "Xor");
+    }
+
+    bool Operators::IsLoopOp(const std::string &opName)
+    {
+        return opName == "PastValue" || opName == "FutureValue";
+    }
+
+    bool Operators::IsRNNOp(const std::string &opName)
+    {
+        return opName == "LSTM" || opName == "GRU" || opName == "RNN" || opName == "RNNStep";
+    }
+    
+    bool Operators::IsSequenceBlockOp(const std::string &opName)
+    {
+        return opName == "Sequence::ReduceElements" || opName == "Sequence::BroadcastAs" || 
+            opName == "Sequence::Gather" || opName == "Sequence::Softmax";
+    }
+
+    std::unordered_map<std::wstring, std::set<size_t>> Operators::_cntkBlockOPInvalidIndices = {
+            { L"Clip",{ 1, 2 } },
+            { L"ELU",{ 0, 1 } },
             { L"LeakyReLU",{ 0, 1 } },
             { L"SELU",{ 0, 1, 2 } },
-            { L"PReLU",{ 0 } },
             { L"ElementMax",{} },
             { L"ElementMin",{} },
             { L"HardSigmoid",{ 0, 1, 2, 3 } },
@@ -397,6 +580,10 @@ namespace ONNX
             { L"Not",{ 0, 1 } },
             { L"Softplus",{ 0 } },
             { L"Softsign",{ 0 } },
+            { L"ImageScaler",{ 0, 1, 2, 3 } },
+            { L"MeanVarianceNormalization",{ 0 } },
+            { L"Sequence::Slice",{ 0, 1, 2, 3, 4 } },
+            { L"GatherPacked",{ 1 } },
         };
 
         std::unordered_map<std::wstring, std::vector<int>> Operators::_cntkToONNXInputIndices = {
@@ -404,6 +591,9 @@ namespace ONNX
             { L"ConvolutionTranspose",{ 1, 0 } },
             { L"BatchNormalization",{ 0, 1, 2, 3, 4, -1 } },
             { L"Times",{ 1, 0 } },
+            { L"Gather",{ 1, 0 } },
+            { L"PReLU",{ -1, 0, 1 } },
+            { L"Gemm", { -1, -1, 1, 0, 2} },
         };
 
         //
@@ -416,5 +606,56 @@ namespace ONNX
             { L"Dropout" },
         };
 
+        std::set<std::wstring> Operators::_optimizedRnnStackOpNames = {
+            { L"lstm" },
+            { L"rnnReLU" },
+            { L"rnnTanh" },
+        };
+
+        std::unordered_map<std::wstring, std::string> Operators::_optimizedRnnOpNameToOnnxOpName = {
+            { L"lstm", "LSTM" },
+            { L"rnnReLU", "RNN" },
+            { L"rnnTanh","RNN" },
+        };
+
+        std::set<std::wstring> Operators::_cntkOpsExportedWithBatchAxis = { // This is mostly used on export side.
+            { L"Convolution" },
+            { L"ConvolutionTranspose" },
+            { L"Pooling" },
+            { L"DepthToSpace" },
+            { L"SpaceToDepth" },
+            { L"LocalResponseNormalization" },
+            { L"MeanVarianceNormalization" },
+            { L"BatchNormalization" },
+            { L"ImageScaler" },
+        };
+
+        std::set<std::string> Operators::_onnxSimpleBatchAxisOps = { // List of all ONNX ops that are simple (single input, output) and have batch axis.
+            { "MaxPool" },
+            { "AveragePool" },
+            { "GlobalAveragePool" },
+            { "GlobalMaxPool" },
+            { "DepthToSpace" },
+            { "SpaceToDepth" },
+            { "LRN" },
+            { "MeanVarianceNormalization" },
+            { "ImageScaler" },
+            { "Crop" },
+        };
+
+        std::string GetRootPath(const std::string& rootPath)
+        {
+            std::string rootPath_ = rootPath;
+            // first make slash consistent (sorry for Linux users:this is not necessary for you)
+            std::replace(rootPath_.begin(), rootPath_.end(), '\\', '/');
+
+            // second, remove trailing slash if there is any
+            std::regex trailer("/+$");
+            std::string root = std::regex_replace(rootPath_, trailer, std::string());
+
+            std::string folder = root.substr(0, root.find_last_of('/'));
+
+            return folder;
+        }
     }
 }

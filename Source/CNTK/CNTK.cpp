@@ -99,14 +99,6 @@ void RedirectStdErr(wstring logpath, bool appendLogFile = false)
     static auto fKept = f;                // keep it around (until it gets changed)
 }
 
-std::string WCharToString(const wchar_t* wst)
-{
-    std::wstring ws(wst);
-    std::string s(ws.begin(), ws.end());
-    s.assign(ws.begin(), ws.end());
-    return s;
-}
-
 size_t GetMaxEpochs(const ConfigParameters& configParams)
 {
     ConfigParameters configSGD(configParams("SGD"));
@@ -178,6 +170,91 @@ static void DisableLegacyUsage(const ConfigParameters& TopLevelConfig, const Con
 // When running in parallel with MPI, only commands in 'commandstoRunOnAllRanks' should
 // be run in parallel across multiple ranks. Others should only run on rank 0
 const std::set<std::string> commandstoRunOnAllRanks = { "train", "trainRNN", "adapt", "test", "eval", "cv", "devtest", "bnstat" };
+
+
+template <typename ElemType>
+bool DispatchThisAction(const string &thisAction, const ConfigParameters &commandParams, const ConfigParameters& config)
+{
+    if (thisAction == "train" || thisAction == "trainRNN")
+    {
+        DoTrain<ConfigParameters, ElemType>(commandParams);
+    }
+    else if (thisAction == "bnstat")
+    {
+        DoBatchNormalizationStat<ElemType>(commandParams);
+    }
+    else if (thisAction == "adapt")
+    {
+        DoAdapt<ElemType>(commandParams);
+    }
+    else if (thisAction == "test" || thisAction == "eval")
+    {
+        DoEval<ElemType>(commandParams);
+    }
+    else if (thisAction == "edit")
+    {
+        DoEdit<ElemType>(commandParams);
+    }
+    else if (thisAction == "cv")
+    {
+        DoCrossValidate<ElemType>(commandParams);
+    }
+    else if (thisAction == "write")
+    {
+        DoWriteOutput<ElemType>(commandParams);
+    }
+    else if (thisAction == "devtest")
+    {
+        TestCn<ElemType>(config); // for "devtest" action pass the root config instead
+    }
+    else if (thisAction == "dumpNodes" /*deprecated:*/ || thisAction == "dumpNode" || thisAction == "dumpnode")
+    {
+        DoDumpNodes<ElemType>(commandParams);
+    }
+    else if (thisAction == "convertdbn")
+    {
+        DoConvertFromDbn<ElemType>(commandParams);
+    }
+    else if (thisAction == "exportdbn")
+    {
+        DoExportToDbn<ElemType>(commandParams);
+    }
+    else if (thisAction == "createLabelMap")
+    {
+        DoCreateLabelMap<ElemType>(commandParams);
+    }
+    else if (thisAction == "writeWordAndClass")
+    {
+        DoWriteWordAndClassInfo<ElemType>(commandParams);
+    }
+    else if (thisAction == "plot")
+    {
+        DoTopologyPlot<ElemType>(commandParams);
+    }
+    else if (thisAction == "SVD")
+    {
+        DoParameterSVD<ElemType>(commandParams);
+    }
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+template <>
+bool DispatchThisAction<half>(const string &thisAction, const ConfigParameters &commandParams, const ConfigParameters& )
+{
+    if (thisAction == "train" || thisAction == "trainRNN")
+    {
+        DoTrain<ConfigParameters, half>(commandParams);
+    }
+    else
+    {
+        RuntimeError("half only supported for action train or trainRNN!");
+    }
+    return true;
+}
 
 // process the command
 template <typename ElemType>
@@ -278,72 +355,20 @@ void DoCommands(const ConfigParameters& config, const shared_ptr<MPIWrapper>& mp
                     {
                         LOGPRINTF(stderr, "CNTKCommandTrainBegin: %s\n", command[i].c_str());
                     }
-                    DoTrain<ConfigParameters, ElemType>(commandParams);
+                }
+
+                if (!DispatchThisAction<ElemType>(thisAction, commandParams, config))
+                {
+                    RuntimeError("unknown action: %s  in command set: %s", thisAction.c_str(), command[i].c_str());
+                }
+
+                if (thisAction == "train" || thisAction == "trainRNN")
+                {
                     if (progressTracing)
                     {
                         LOGPRINTF(stderr, "CNTKCommandTrainEnd: %s\n", command[i].c_str());
                     }
                     fullEpochsOffset += GetMaxEpochs(commandParams);
-                }
-                else if (thisAction == "bnstat")
-                {
-                    DoBatchNormalizationStat<ElemType>(commandParams);
-                }
-                else if (thisAction == "adapt")
-                {
-                    DoAdapt<ElemType>(commandParams);
-                }
-                else if (thisAction == "test" || thisAction == "eval")
-                {
-                    DoEval<ElemType>(commandParams);
-                }
-                else if (thisAction == "edit")
-                {
-                    DoEdit<ElemType>(commandParams);
-                }
-                else if (thisAction == "cv")
-                {
-                    DoCrossValidate<ElemType>(commandParams);
-                }
-                else if (thisAction == "write")
-                {
-                    DoWriteOutput<ElemType>(commandParams);
-                }
-                else if (thisAction == "devtest")
-                {
-                    TestCn<ElemType>(config); // for "devtest" action pass the root config instead
-                }
-                else if (thisAction == "dumpNodes" /*deprecated:*/ || thisAction == "dumpNode" || thisAction == "dumpnode")
-                {
-                    DoDumpNodes<ElemType>(commandParams);
-                }
-                else if (thisAction == "convertdbn")
-                {
-                    DoConvertFromDbn<ElemType>(commandParams);
-                }
-                else if (thisAction == "exportdbn")
-                {
-                    DoExportToDbn<ElemType>(commandParams);
-                }
-                else if (thisAction == "createLabelMap")
-                {
-                    DoCreateLabelMap<ElemType>(commandParams);
-                }
-                else if (thisAction == "writeWordAndClass")
-                {
-                    DoWriteWordAndClassInfo<ElemType>(commandParams);
-                }
-                else if (thisAction == "plot")
-                {
-                    DoTopologyPlot<ElemType>(commandParams);
-                }
-                else if (thisAction == "SVD")
-                {
-                    DoParameterSVD<ElemType>(commandParams);
-                }
-                else
-                {
-                    RuntimeError("unknown action: %s  in command set: %s", thisAction.c_str(), command[i].c_str());
                 }
             }
 
@@ -419,7 +444,7 @@ int wmainWithBS(int argc, wchar_t* argv[]) // called from wmain which is a wrapp
 
     // startup message
     // In case of a redirect of stderr, this will be printed twice, once upfront, and once again after the redirect so that it goes into the log file
-    wstring startupMessage = msra::strfun::wstrprintf(L"running on %ls at %ls\n", msra::strfun::utf16(GetHostName()).c_str(), msra::strfun::utf16(TimeDateStamp()).c_str());
+    wstring startupMessage = msra::strfun::wstrprintf(L"running on %ls at %ls\n", Microsoft::MSR::CNTK::ToFixedWStringFromMultiByte(GetHostName()).c_str(), Microsoft::MSR::CNTK::ToFixedWStringFromMultiByte(TimeDateStamp()).c_str());
     startupMessage += msra::strfun::wstrprintf(L"command line: %ls", exePath.c_str());
     for (const auto& arg : args)
         startupMessage += L"  " + arg;
@@ -597,7 +622,11 @@ int wmainWithBS(int argc, wchar_t* argv[]) // called from wmain which is a wrapp
 
 static void PrintBanner(int argc, wchar_t* argv[], const string& timestamp)
 {
-    fprintf(stderr, "CNTK 2.3.1+ (");
+#ifndef CNTK_VERSION_BANNER
+#error CNTK_VERSION_BANNER must be set
+#endif
+#define MACRO_TO_STRING(s) #s
+    fprintf(stderr, "CNTK %s (", MACRO_TO_STRING(CNTK_VERSION_BANNER));
 #ifdef _GIT_EXIST
     fprintf(stderr, "%s %.6s, ", _BUILDBRANCH_, _BUILDSHA1_);
 #endif
@@ -744,12 +773,14 @@ int wmainOldCNTKConfig(int argc, wchar_t* argv[])
         LOGPRINTF(stderr, "precision = \"%s\"\n", type.c_str());
     }
 
-    if (type == "float")
+    if (type == "float16")
+        DoCommands<half>(config, mpi);
+    else if (type == "float")
         DoCommands<float>(config, mpi);
     else if (type == "double")
         DoCommands<double>(config, mpi);
     else
-        RuntimeError("CNTK: Invalid precision string: \"%s\", must be \"float\" or \"double\"", type.c_str());
+        RuntimeError("CNTK: Invalid precision string: \"%s\", must be \"float16\" or \"float\" or \"double\"", type.c_str());
 
     // if completed then write a doneFile if requested
     if (!doneFile.empty())

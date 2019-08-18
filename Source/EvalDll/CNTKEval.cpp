@@ -4,6 +4,9 @@
 //
 // CNTKEval.cpp : Defines the exported functions for the CNTK DLL.
 //
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS // "secure" CRT not available on all platforms  --add this at the top of all CPP files that give "function or variable may be unsafe" warnings
+#endif
 
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
@@ -158,11 +161,13 @@ template <typename ElemType>
 void CNTKEval<ElemType>::Evaluate(std::map<std::wstring, std::vector<ElemType>*>& inputs, std::map<std::wstring, std::vector<ElemType>*>& outputs)
 {
     size_t minibatchSize = this->m_config(L"minibatchSize", (size_t) 10240);
+    size_t rightSplice = this->m_config(L"rightSplice", (size_t) 0);
     // get the evaluation names from the output string
     vector<wstring> outNodeNames;
 
     ConfigParameters config;
     // config["deviceId"] = to_string(this->m_net->GetDeviceId());
+    config["rightSplice"] = to_string(rightSplice);
 
     // create the reader if necessary
     if (m_reader == nullptr)

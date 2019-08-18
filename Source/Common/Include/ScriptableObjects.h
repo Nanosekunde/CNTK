@@ -9,6 +9,8 @@
 #include <functional> // for function<>
 #include <map>
 #include <set>
+#include <File.h>
+#include <half.hpp>
 
 namespace Microsoft { namespace MSR { namespace ScriptableObjects {
 
@@ -356,6 +358,10 @@ public:
     {
         return (float) AsRef<Double>();
     }
+    operator half() const
+    {
+        return (half)AsRef<Double>();
+    }
     operator bool() const
     {
         return AsRef<Bool>();
@@ -398,7 +404,7 @@ public:
         // const C * wanted = (C *) nullptr; const auto * got = get(); wanted; got;   // allows to see C in the debugger
         const auto p = dynamic_cast<C *>(get());
         if (p == nullptr) // TODO: can we make this look the same as TypeExpected in BrainScriptEvaluator.cpp? We'd need the type name
-            Fail(L"config member has wrong type (" + msra::strfun::utf16(typeid(*get()).name()) + L"), expected a " + TypeId<C>());
+            Fail(L"config member has wrong type (" + Microsoft::MSR::CNTK::ToFixedWStringFromMultiByte(typeid(*get()).name()) + L"), expected a " + TypeId<C>());
         return *p;
     }
     template <class C>
@@ -407,7 +413,7 @@ public:
         EnsureIsResolved();
         const auto p = dynamic_pointer_cast<C>(*this);
         if (!p) // TODO: can we make this look the same as TypeExpected in BrainScriptEvaluator.cpp? We'd need the type name
-            Fail(L"config member has wrong type (" + msra::strfun::utf16(typeid(*get()).name()) + L"), expected a " + TypeId<C>());
+            Fail(L"config member has wrong type (" + Microsoft::MSR::CNTK::ToFixedWStringFromMultiByte(typeid(*get()).name()) + L"), expected a " + TypeId<C>());
         return p;
     }
 
@@ -485,7 +491,7 @@ struct IConfigRecord // any class that exposes config can derive from this
     }
     std::string operator()(const std::wstring &id, const char *defaultValue) const
     {
-        return msra::strfun::utf8(operator()(id, (std::wstring) msra::strfun::utf16(defaultValue)));
+        return Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(operator()(id, Microsoft::MSR::CNTK::ToFixedWStringFromMultiByte(defaultValue))));
     } // special case for narrow strings
     std::wstring operator()(const std::wstring &id, const wchar_t *defaultValue) const
     {

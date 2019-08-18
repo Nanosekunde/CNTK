@@ -10,9 +10,9 @@
 
 // Disabling some deprecation warnings in boost.
 // Classes that we use are not deprecated.
-#pragma warning(disable:4348 4459 4100)
+#pragma warning(disable:4348 4459 4100 4819)
 #include <boost/spirit/include/qi.hpp>
-#pragma warning(default:4348 4459 4100)
+#pragma warning(default:4348 4459 4100 4819)
 
 using namespace std;
 
@@ -111,6 +111,13 @@ namespace CNTK {
 
         if(m_classId != uid)
             RuntimeError("Offset '%zu': not enough bits to represent a class id '%zu'.", byteOffset, uid);
+    }
+
+    void MLFFrameRange::Save(unsigned int firstFrame, unsigned int numFrames, size_t uid)
+    {
+        m_firstFrame = firstFrame;
+        m_numFrames = numFrames;
+        m_classId = (ClassIdType)uid;
     }
 
     pair<size_t, size_t> MLFFrameRange::ParseFrameRange(const vector<boost::iterator_range<char*>>& tokens, size_t byteOffset)

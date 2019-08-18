@@ -15,7 +15,9 @@
 #include "HTKMLFReader.h"
 #include "HeapMemoryProvider.h"
 #include "HTKDeserializer.h"
+#include "LatticeDeserializer.h"
 #include "MLFDeserializer.h"
+#include "MLFBinaryDeserializer.h"
 #include "StringUtil.h"
 #include "V2Dependencies.h"
 
@@ -64,6 +66,14 @@ extern "C" DATAREADER_API bool CreateDeserializer(DataDeserializerPtr& deseriali
     else if (type == L"HTKMLFDeserializer")
     {
         deserializer = make_shared<MLFDeserializer>(corpus, deserializerConfig, primary);
+    }
+    else if (type == L"LatticeDeserializer")
+    {
+        deserializer = make_shared<LatticeDeserializer>(corpus, deserializerConfig, primary);
+    }
+    else if (type == L"HTKMLFBinaryDeserializer")
+    {
+        deserializer = make_shared<MLFBinaryDeserializer>(corpus, deserializerConfig, primary);
     }
     else
     {

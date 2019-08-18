@@ -3,33 +3,63 @@
 // Licensed under the MIT license. See LICENSE.md file in the project root for full license information.
 //
 
+#include "core/graph/model.h"
+#include "core/graph/graph.h"
+#include "core/common/logging/logging.h"
+
+#include "Logger.h"
 #include "ONNX.h"
 #include "CNTKToONNX.h"
-#include "proto/onnx/core/model.h"
-#include "proto/onnx/core/graph.h"
+#include "ONNXToCNTK.h"
 #include "Utils.h"
 
 #include <iostream>
 #include <memory>
 
-#include "ONNXToCNTK.h"
-
 using namespace CNTK;
+using namespace Microsoft::MSR::CNTK;
 
 namespace CNTK
 {
+    std::once_flag ONNXFormat::op_schema_initializer_flag_;
+    static std::string defaultLoggerId{"Default"};
+    static onnxruntime::logging::LoggingManager default_logging_manager_{ 
+        std::unique_ptr<onnxruntime::logging::ISink>{new CNTKClogSink{}},
+        [](){
+            onnxruntime::logging::Severity severity;
+            switch (GetTraceLevel())
+            {
+            case TraceLevel::Error:
+                severity = onnxruntime::logging::Severity::kERROR;
+                break;
+            case TraceLevel::Warning:
+                severity = onnxruntime::logging::Severity::kWARNING;
+                break;
+            case TraceLevel::Info:
+                severity = onnxruntime::logging::Severity::kINFO;
+                break;
+            default:
+                severity = onnxruntime::logging::Severity::kFATAL;
+            }
+            return severity;
+        }(),
+        false,
+        onnxruntime::logging::LoggingManager::InstanceType::Default,
+        &defaultLoggerId };
+
     static void PrintGraph(FunctionPtr function, int spaces, bool useName = false)
     {
         if (function->Inputs().size() == 0)
         {
-            cout << string(spaces, '.') + "(" + ToString(useName ? function->Name() : function->Uid()) + ")" + ToString(function->AsString()) << std::endl;
+            cout << string(spaces, '.') + "(" + ToLegacyString(ToUTF8(useName ? function->Name() : function->Uid())) + ")" + ToLegacyString(ToUTF8(function->AsString())) << std::endl;
             return;
         }
 
         for (auto input : function->Inputs())
         {
-            cout << string(spaces, '.') + "(" + ToString(useName ? function->Name() : function->Uid()) + ")" + "->" +
-                "(" + ToString(useName ? input.Name() : input.Uid()) + ")" + ToString(input.AsString()) << std::endl;
+            cout << string(spaces, '.') + "(" + ToLegacyString(ToUTF8(useName ? function->Name() : function->Uid())) + ")" + "->" +
+                        "(" + ToLegacyString(ToUTF8(useName ? input.Name() : input.Uid())) + ")" + ToLegacyString(ToUTF8(input.AsString()))
+                 << std::endl;
         }
 
         for (auto input : function->Inputs())
@@ -43,28 +73,71 @@ namespace CNTK
     }
 }
 
-void ONNXFormat::Save(const FunctionPtr& src, const std::wstring& filepath)
+void ONNXFormat::InitializeLotusIR()
 {
-    auto model = CNTKToONNX::CreateModel(src);
+    //
+    // Initializing ONNX_NAMESPACE::Utils::DataTypeUtils::GetTypeStrToProtoMap()
+    // 
+    // This is a static unordered_map<string, TypeProto> variable that stores the mapping from type name(string) to TypeProto.
+    // If used without proper initialization, we risk poluting this static map: 
+    // Whenever it sees a TypeProto with an unseen type name, it tries to store that TypeProto into the map. 
+    // That TypeProto object might very likely contain TensorShapeProto, which describes the shape for that particular tensor. 
+    // This shape will become the default for every TypeProto object created from that type name later on. 
+    // And this leads to lots of unexpected errors such as shape inference failure. 
+    //
+    // The solution is to initialize the map at the first run. 
+    std::call_once(op_schema_initializer_flag_, [&]() {
+        ONNX_NAMESPACE::OpSchema tmpSchemaForInitializingAllTensorTypes;
+        tmpSchemaForInitializingAllTensorTypes.TypeConstraint("T", ONNX_NAMESPACE::OpSchema::all_tensor_types(), "");
+    });
+}
+
+void ONNXFormat::Save(const FunctionPtr& src, const std::wstring& filepath, bool useExternalFilesToStoreParameters)
+{
+    InitializeLotusIR();
+
+    auto model = CNTKToONNX::CreateModel(src, filepath, useExternalFilesToStoreParameters);
 #ifdef _WIN32
-    ONNXIR::Model::Save(*model, filepath);
+    onnxruntime::Model::Save(*model, filepath);
 #else
-    ONNXIR::Model::Save(*model, ToString(filepath));
+    onnxruntime::Model::Save(*model, ToLegacyString(ToUTF8(filepath)));
 #endif
 }
 
 FunctionPtr ONNXFormat::Load(const std::wstring& filepath, const DeviceDescriptor& computeDevice)
 {
-    std::shared_ptr<ONNXIR::Model> model;
+    InitializeLotusIR();
+
+    std::shared_ptr<onnxruntime::Model> model;
 
 #ifdef _WIN32
-    Status loadStatus = ONNXIR::Model::Load(filepath, &model);
+    onnxruntime::common::Status loadStatus = onnxruntime::Model::Load(filepath, model);
 #else
-    Status loadStatus = ONNXIR::Model::Load(ToString(filepath), &model);
+    onnxruntime::common::Status loadStatus = onnxruntime::Model::Load(ToLegacyString(ToUTF8(filepath)), model);
 #endif
-    if (!loadStatus.Ok())
-        LogicError("Failed to load the model.");
+    if (!loadStatus.IsOK())
+        LogicError("Failed to load model: '%s'", loadStatus.ErrorMessage().c_str());
 
-    FunctionPtr cntkFunction = ONNXToCNTK::CreateGraph(model->MainGraph(), computeDevice);
+    FunctionPtr cntkFunction = ONNXToCNTK::CreateGraph(&model->MainGraph(), computeDevice, ToLegacyString(ToUTF8(filepath)));
+    return cntkFunction;
+}
+
+FunctionPtr ONNXFormat::Load(const void* model_data, int model_data_len, const DeviceDescriptor& computeDevice)
+{
+    InitializeLotusIR();
+
+    onnx::ModelProto model_proto;
+    const bool result = model_proto.ParseFromArray(model_data, model_data_len);
+    if (!result) {
+        LogicError("protobuf failed to parse model");
+    }
+
+    std::shared_ptr<onnxruntime::Model> model;
+    onnxruntime::common::Status loadStatus = onnxruntime::Model::Load(model_proto, model);
+
+    if (!loadStatus.IsOK())
+        LogicError("Failed to load model: '%s'", loadStatus.ErrorMessage().c_str());
+
+    FunctionPtr cntkFunction = ONNXToCNTK::CreateGraph(&model->MainGraph(), computeDevice);
     return cntkFunction;
 }

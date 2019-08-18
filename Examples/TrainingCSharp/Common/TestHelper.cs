@@ -18,6 +18,10 @@ namespace CNTK.CSTrainingExamples
         Sigmoid,
         Tanh
     }
+    public static class TestCommon
+    {
+        public static string TestDataDirPrefix;
+    }
     public class TestHelper
     {
         public static Function Dense(Variable input, int outputDim, DeviceDescriptor device,
@@ -86,7 +90,7 @@ namespace CNTK.CSTrainingExamples
                     break;
                 totalCount += (int)minibatchData[featureStreamInfo].numberOfSamples;
 
-                // expected lables are in the minibatch data.
+                // expected labels are in the minibatch data.
                 var labelData = minibatchData[labelStreamInfo].data.GetDenseData<float>(labelOutput);
                 var expectedLabels = labelData.Select(l => l.IndexOf(l.Max())).ToList();
 

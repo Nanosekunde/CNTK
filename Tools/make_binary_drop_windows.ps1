@@ -5,7 +5,7 @@
 [CmdletBinding()]
 param(
     [parameter(Mandatory=$true)][string]$targetConfig,           # the config created (CPU, GPU, ...)
-    [parameter(Mandatory=$true)][string]$targetConfigSuffix,     # the config suffix (CPU-Only, GPU, GPU-1bit-SGD ...)
+    [parameter(Mandatory=$true)][string]$targetConfigSuffix,     # the config suffix (CPU-Only, GPU ...)
     [parameter(Mandatory=$true)][string]$releaseTag,             # the tag of the release (2-0-beta11-0)
     [parameter(Mandatory=$true)][string]$commit,
     [parameter(Mandatory=$true)][string]$outputFileName,         # the generated zip file name
@@ -20,6 +20,7 @@ Write-Verbose "Making binary drops..."
 $basePath = "ToZip"
 $baseDropPath = Join-Path $basePath -ChildPath cntk
 $baseIncludePath = Join-Path $baseDropPath -ChildPath Include
+$baseIncludeInternalPath = Join-Path $baseIncludePath -ChildPath Internals
 $buildPath = "x64\Release"
 if ($targetConfig -eq "CPU")
 {
@@ -28,12 +29,22 @@ if ($targetConfig -eq "CPU")
 # Include Files
 $includePath = "Source\Common\Include"
 $includePath20 = "Source\CNTKv2LibraryDll\API"
-$includeFiles = New-Object string[] 4
+$includeFiles = New-Object string[] 5
 $includeFiles[0] = Join-Path $includePath -ChildPath Eval.h
 $includeFiles[1] = Join-Path $includePath20 -ChildPath CNTKLibrary.h
 $includeFiles[2] = Join-Path $includePath20 -ChildPath CNTKLibraryInternals.h
 $includeFiles[3] = Join-Path $includePath20 -ChildPath CNTKLibraryC.h
+$includeFiles[4] = Join-Path $includePath20 -ChildPath HalfConverter.hpp
 $sharePath = Join-Path $sharePath -ChildPath $targetConfig
+
+# Include Internal Files
+$includeInternalPath20 = Join-Path $includePath20 -ChildPath Internals
+$includeInternalFiles = New-Object string[] 5
+$includeInternalFiles[0] = Join-Path $includeInternalPath20 -ChildPath ComputationGraphAlgorithms.h
+$includeInternalFiles[1] = Join-Path $includeInternalPath20 -ChildPath EvaluatorWrapper.h
+$includeInternalFiles[2] = Join-Path $includeInternalPath20 -ChildPath PrimitiveFunctionAttribute.h
+$includeInternalFiles[3] = Join-Path $includeInternalPath20 -ChildPath PrimitiveFunction.h
+$includeInternalFiles[4] = Join-Path $includeInternalPath20 -ChildPath PrimitiveOpType.h
 
 # binaryDrop locations
 $artifactPath = Join-Path $workSpace BinaryDrops
@@ -77,6 +88,13 @@ Write-Verbose "Copying Include files ..."
 Foreach ($includeFile in $includeFiles)
 {
     Copy-Item $includeFile -Destination $baseIncludePath
+}
+
+# Copy Include Internals
+Write-Verbose "Copying Include internal files ..."
+Foreach ($includeInternalFile in $includeInternalFiles)
+{
+    Copy-Item $includeInternalFile -Destination $baseIncludeInternalPath
 }
 
 # Copy Examples

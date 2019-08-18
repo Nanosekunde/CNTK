@@ -111,6 +111,11 @@ namespace CNTK
             return Combine({ *this });
     }
 
+    const NDArrayViewPtr Variable::GetValue() const
+    {
+        return Value();
+    }
+
     NDArrayViewPtr Variable::Value() const
     {
         if (!IsConstant() && !IsParameter())
@@ -133,6 +138,21 @@ namespace CNTK
                 case DataType::Double:
                 {
                     m_dataFields->m_value = CreateValueFromParameterInitializer<double>(Shape(), *m_dataFields->m_valueInitializer, *m_dataFields->m_valueInitializationDevice);
+                    break;
+                }
+                case DataType::Float16:
+                {
+                    m_dataFields->m_value = CreateValueFromParameterInitializer<half>(Shape(), *m_dataFields->m_valueInitializer, *m_dataFields->m_valueInitializationDevice);
+                    break;
+                }
+                case DataType::Int8:
+                {
+                    m_dataFields->m_value = CreateValueFromParameterInitializer<char>(Shape(), *m_dataFields->m_valueInitializer, *m_dataFields->m_valueInitializationDevice);
+                    break;
+                }
+                case DataType::Int16:
+                {
+                    m_dataFields->m_value = CreateValueFromParameterInitializer<short>(Shape(), *m_dataFields->m_valueInitializer, *m_dataFields->m_valueInitializationDevice);
                     break;
                 }
                 default:
@@ -496,7 +516,10 @@ namespace CNTK
         DataType dataType = DataType(dict[dataTypeKey].Value<std::size_t>());
         if (dataType != DataType::Unknown &&
             dataType != DataType::Float &&
-            dataType != DataType::Double)
+            dataType != DataType::Double &&
+            dataType != DataType::Float16 &&
+            dataType != DataType::Int8 &&
+            dataType != DataType::Int16)
         {
             LogicError("Unexpected variable datatype '%ls':'%u' (%s).", 
                        dataTypeKey.c_str(), 

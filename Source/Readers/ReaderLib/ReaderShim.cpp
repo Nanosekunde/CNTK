@@ -234,7 +234,7 @@ string EnumerateInputs(const unordered_map<wstring, size_t>& nameToStreamId)
     for (auto s : nameToStreamId)
     {
         str << (first ? "" : ", ");
-        auto name = msra::strfun::utf8(s.first);
+        std::string name = Microsoft::MSR::CNTK::ToLegacyString(Microsoft::MSR::CNTK::ToUTF8(s.first));
         str << '\"' << name.c_str() << '\"';
         first = false;
     }
@@ -254,12 +254,6 @@ bool ReaderShim<ElemType>::GetMinibatch(StreamMinibatchInputs& matrices)
     }
 
     //TODO: Set proper format on matrices?
-
-    // Check that all matrices have the same device id.
-    // If not we should inject the MemoryProvider per stream.
-    int deviceId = matrices.begin()->second.matrix->GetDeviceId();
-    for (auto mx : matrices)
-        assert(mx.second.matrix->GetDeviceId() == deviceId), UNUSED(deviceId);
 
     // Do sanity checks: requested streams should be exposed by low level deserializers.
     for (const auto& mx : matrices)
@@ -342,8 +336,8 @@ bool ReaderShim<ElemType>::GetMinibatch(StreamMinibatchInputs& matrices)
         }
         else if (i->second.sampleLayout.GetNumElements() != AsTensorShape(sampleShape).GetNumElements())
         {
-            RuntimeError("Sample shape provided by the deserializer '%s' does not match the shape expected by the network '%s'.",
-                string(AsTensorShape(sampleShape)).c_str(), string(i->second.sampleLayout).c_str());
+            RuntimeError("Sample shape for '%ls' provided by the deserializer '%s' does not match the shape expected by the network '%s'.", 
+                i->first.c_str(), string(AsTensorShape(sampleShape)).c_str(), string(i->second.sampleLayout).c_str());
         }
     }
 

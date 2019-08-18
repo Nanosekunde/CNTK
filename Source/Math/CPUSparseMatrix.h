@@ -62,6 +62,7 @@ public:
     using Base::Buffer;
     using Base::GetNumRows;
     using Base::GetNumCols;
+    using Base::GetDiagSize;
     using Base::GetNumElements;
     using Base::OwnBuffer;
     using Base::GetFormat;
@@ -92,6 +93,8 @@ public:
     void MaskColumnsValue(const CPUMatrix<char>& columnsMask, ElemType val, size_t numColsPerMaskEntry);
 
     CPUSparseMatrix<ElemType>& AssignOneHot(const CPUMatrix<ElemType>& a, vector<size_t>& shape, size_t axis);
+    void SetDiagonalValue(const ElemType v);
+    void SetDiagonalValue(const CPUMatrix<ElemType>& vector);
 
     CPUSparseMatrix<ElemType>& DoGatherColumnsOf(ElemType beta, const CPUMatrix<ElemType>& idx, const CPUSparseMatrix<ElemType>& a, ElemType alpha);
     CPUSparseMatrix<ElemType>& DoScatterColumnsOf(ElemType beta, const CPUMatrix<ElemType>& idx, const CPUSparseMatrix<ElemType>& a, ElemType alpha);
@@ -232,7 +235,9 @@ public:
 public:
     void NormalGrad(CPUMatrix<ElemType>& c, const ElemType momentum, ElemType unitGainFactor);
     ElemType Adagrad(CPUMatrix<ElemType>& c, const bool needAveMultiplier);
-    void AdaDelta(CPUMatrix<ElemType>& c, CPUMatrix<ElemType>& functionValues, ElemType learningRate, ElemType rho, ElemType epsilon, int* timestamps, int currentTimestamp);
+
+    template<typename AccumType>
+    void AdaDelta(CPUMatrix<AccumType>& c, CPUMatrix<AccumType>& functionValues, AccumType learningRate, AccumType rho, AccumType epsilon, int* timestamps, int currentTimestamp);
 
 public:
     CPUSparseMatrix<ElemType>& InplaceTruncateTop(const ElemType threshold);

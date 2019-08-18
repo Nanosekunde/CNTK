@@ -314,7 +314,15 @@ public:
 
     virtual ParentGradientOptimization ImplementsGradientOptimization(const ComputationNodeBase*) const override
     {
-        return ParentGradientOptimization::Overwrite;
+        switch (m_reductionOp)
+        {
+        case ElementWiseOperator::opArgmin:
+        case ElementWiseOperator::opArgmax:
+            //no optimization will happen; the child should not use the parent's gradients as no gradients will be passed
+            return ParentGradientOptimization::None;
+        default:
+            return ParentGradientOptimization::Overwrite;
+        }
     }
 
     void RequestMatricesBeforeForwardProp(MatrixPool& matrixPool) override
@@ -878,8 +886,8 @@ public:
     
 
 public:
-    PaddingNode(DEVICEID_TYPE deviceId, const wstring& name, std::vector<size_t> head, std::vector<size_t> foot, PaddingType mode = PaddingType::CONSTANTPAD, ElemType constantValue = 0)
-        : Base(deviceId, name), m_head(head), m_foot(foot), m_mode(mode), m_constant_value(constantValue)
+    PaddingNode(DEVICEID_TYPE deviceId, const wstring& name, std::vector<size_t> head, std::vector<size_t> foot, PaddingType mode = PaddingType::CONSTANTPAD, double constantValue = 0)
+        : Base(deviceId, name), m_head(head), m_foot(foot), m_mode(mode), m_constant_value((ElemType)constantValue)
     {
     }
 
@@ -2101,11 +2109,19 @@ public:
                 row_elements *= dims[i];
             }
 
-            sourceGradient.ScatterToIndices(outputGradient, indices, row_elements);
+            if (InputRef(0).HasMBLayout())
+            {
+                const auto& indicesMask = InputRef(0).GetMBLayout()->GetColumnsValidityMask(indices.GetDeviceId());
+                sourceGradient.ScatterToIndices(outputGradient, indices, row_elements, &indicesMask);
+            }
+            else
+            {
+                sourceGradient.ScatterToIndices(outputGradient, indices, row_elements);
+            }
         }
         else
         {
-            LogicError("%ls operation doesn't expect gradient on left operand", OperationName().c_str());
+            //No graidents pass through indices (the left operand), so do nothing
         }
     }
 

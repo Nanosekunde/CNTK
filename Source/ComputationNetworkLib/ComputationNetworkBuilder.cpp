@@ -111,6 +111,7 @@ static shared_ptr<ComputationNode<ElemType>> CreateStandardNode(const std::wstri
     else if (nodeType == OperationNameOf(RowStackNode))                         return New<RowStackNode<ElemType>>(forward<_Types>(_Args)...);
     else if (nodeType == OperationNameOf(ScatterPackedNode))                    return New<ScatterPackedNode<ElemType>>(forward<_Types>(_Args)...);
     else if (nodeType == OperationNameOf(SequenceWithSoftmaxNode))              return New<SequenceWithSoftmaxNode<ElemType>>(forward<_Types>(_Args)...);
+    else if (nodeType == OperationNameOf(LatticeSequenceWithSoftmaxNode))       return New<LatticeSequenceWithSoftmaxNode<ElemType>>(forward<_Types>(_Args)...);
 #ifdef COMING_SOON
     else if (nodeType == OperationNameOf(SequenceDecoderNode))                  return New<SequenceDecoderNode<ElemType>>(forward<_Types>(_Args)...);
 #endif
@@ -135,6 +136,7 @@ static shared_ptr<ComputationNode<ElemType>> CreateStandardNode(const std::wstri
     else if (nodeType == OperationNameOf(TransposeTimesNode))                   return New<TransposeTimesNode<ElemType>>(forward<_Types>(_Args)...);
     else if (nodeType == OperationNameOf(QuantizedTimesNode))                   return New<QuantizedTimesNode<ElemType>>(forward<_Types>(_Args)...);
     else if (nodeType == OperationNameOf(WhereNode))                            return New<WhereNode<ElemType>>(forward<_Types>(_Args)...);
+    else if (nodeType == OperationNameOf(StraightThroughNode))                  return New<StraightThroughNode<ElemType>>(forward<_Types>(_Args)...);
     // legacy names we also support for back compat of model-files
     else if (nodeType == L"ColumnElementTimes")                                 return New<ElementTimesNode<ElemType>>(forward<_Types>(_Args)...);
     else if (nodeType == L"ErrorPrediction")                                    return New<ClassificationErrorNode<ElemType>>(forward<_Types>(_Args)...);
@@ -173,6 +175,13 @@ static shared_ptr<ComputationNode<ElemType>> CreateNode(const std::wstring& node
     else return CreateStandardNode<ElemType>(nodeType, forward<_Types>(_Args)...);
 }
 
+template <class ElemType, class ElemType2, class... _Types>
+static shared_ptr<ComputationNode<ElemType>> CreateNode2(const std::wstring& nodeType, _Types&&... _Args)
+{
+    // check more types
+    if (nodeType == OperationName2Of(CastNode))       return New<CastNode<ElemType, ElemType2>>(forward<_Types>(_Args)...);
+    else RuntimeError("CreateNode2: unsupported nodeType - %S", nodeType.c_str());
+}
 // this function is called from SimpleNetworkBuilder and old NDL
 template <class ElemType>
 /*static*/ shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::NewStandardNode(const std::wstring& nodeType, DEVICEID_TYPE deviceId, const wstring& name)
@@ -187,17 +196,66 @@ template <class ElemType>
     return CreateNode<ElemType>(nodeType, deviceId, name);
 }
 
+template <class ElemType>
+template <class ElemType2>
+/*static*/ shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::NewNode2(const std::wstring& nodeType, DEVICEID_TYPE deviceId, const wstring& name)
+{
+    return CreateNode2<ElemType, ElemType2>(nodeType, deviceId, name);
+}
+
 shared_ptr<ComputationNodeBase> NewComputationNodeFromConfig(const Microsoft::MSR::ScriptableObjects::IConfigRecordPtr configp)
 {
     wstring precision = configp->Get(L"precision"); // dispatch on ElemType
     wstring operationName = configp->Get(L"operation");
     ComputationNodeBasePtr node;
-    if (precision == L"float")
-        node = CreateNode<float>(operationName, configp);
-    else if (precision == L"double")
-        node = CreateNode<double>(operationName, configp);
+    if (operationName == OperationName2Of(CastNode))
+    {
+        auto inputs = ComputationNodeBase::GetInputsFromConfig(configp);
+        if (inputs.empty())
+            RuntimeError("NewComputationNodeFromConfig: No inputs found for Cast node.");
+
+        if (precision == L"float16" || precision == L"half")
+        {
+            if (inputs[0]->Is<ComputationNode<float>>())
+                node = CreateNode2<half, float>(operationName, configp);
+            else if (inputs[0]->Is<ComputationNode<double>>())
+                node = CreateNode2<half, double>(operationName, configp);
+            else
+                RuntimeError("NewComputationNodeFromConfig: for CastNode to cast to half, input must be  'float' or 'double'");
+        }
+        else if (precision == L"float")
+        {
+            if (inputs[0]->Is<ComputationNode<half>>())
+                node = CreateNode2<float, half>(operationName, configp);
+            else if (inputs[0]->Is<ComputationNode<double>>())
+                    node = CreateNode2<float, double>(operationName, configp);
+            else
+                RuntimeError("NewComputationNodeFromConfig: for CastNode to cast to float, input must be  'float16' or 'double'");
+        }
+        else if (precision == L"double")
+        {
+            if (inputs[0]->Is<ComputationNode<half>>())
+                node = CreateNode2<double, half>(operationName, configp);
+            else if (inputs[0]->Is<ComputationNode<float>>())
+                node = CreateNode2<double, float>(operationName, configp);
+            else
+                RuntimeError("NewComputationNodeFromConfig: for CastNode to cast to double, input must be  'float' or 'float16'");
+        }
+        else
+            RuntimeError("NewComputationNodeFromConfig: CastNode - need to specify 'precision' parameter: 'float', 'double' or 'float16'.");
+    }
     else
-        RuntimeError("NewStandardNode: Invalid value '%ls' for 'precision' parameter. Must be 'float' or 'double'.", precision.c_str());
+    {
+        if (precision == L"float")
+            node = CreateNode<float>(operationName, configp);
+        else if (precision == L"float16" || precision == L"half")
+            node = CreateNode<half>(operationName, configp);
+        else if (precision == L"double")
+            node = CreateNode<double>(operationName, configp);
+        else
+            RuntimeError("NewComputationNodeFromConfig: Invalid value '%ls' for 'precision' parameter. Must be 'float16', 'float' or 'double'.", precision.c_str());
+    }
+
     // add a tag
     // Tags are used to declare special node types to ComputationNetwork.
     // For now we support only a single tag, but we could in the future easily extend this to an array of tags.
@@ -225,9 +283,10 @@ shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::Creat
 
 // this is used in V2
 template <class ElemType>
-shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::CreateLearnableParameter(const std::wstring& paramName, const TensorShape& tensorShape)
+template <class ValueType>
+shared_ptr<ComputationNode<ValueType>> ComputationNetworkBuilder<ElemType>::TypedCreateLearnableParameter(const std::wstring& paramName, const TensorShape& tensorShape)
 {
-    return net.AddNodeToNetWithElemType(New<LearnableParameter<ElemType>>(net.GetDeviceId(), paramName, tensorShape));
+    return net.AddNodeToNetWithElemType(New<LearnableParameter<ValueType>>(net.GetDeviceId(), paramName, tensorShape));
 }
 
 // TODO: change these to take an actual object instead of a name for dynamicAxis
@@ -244,15 +303,17 @@ shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::Creat
 }
 
 template <class ElemType>
-shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::CreateInputNode(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName)
+template <class ValueType>
+shared_ptr<ComputationNode<ValueType>> ComputationNetworkBuilder<ElemType>::TypedCreateInputNode(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName)
 {
-    return net.AddNodeToNetWithElemType(New<InputValue<ElemType>>(net.GetDeviceId(), inputName, sampleLayout, dynamicAxisName));
+    return net.AddNodeToNetWithElemType(New<InputValue<ValueType>>(net.GetDeviceId(), inputName, sampleLayout, dynamicAxisName));
 }
 
 template <class ElemType>
-shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::CreateSparseInputNode(const std::wstring& inputName, const TensorShape& imageLayout, const wstring& dynamicAxisName)
+template <class ValueType>
+shared_ptr<ComputationNode<ValueType>> ComputationNetworkBuilder<ElemType>::TypedCreateSparseInputNode(const std::wstring& inputName, const TensorShape& imageLayout, const wstring& dynamicAxisName)
 {
-    return net.AddNodeToNetWithElemType(New<SparseInputValue<ElemType>>(net.GetDeviceId(), inputName, imageLayout, dynamicAxisName));
+    return net.AddNodeToNetWithElemType(New<SparseInputValue<ValueType>>(net.GetDeviceId(), inputName, imageLayout, dynamicAxisName));
 }
 
 template <class ElemType>
@@ -314,6 +375,12 @@ template <class ElemType>
 shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::CreateReconcileDynamicAxisNode(const std::wstring& nodeName)
 {
     return net.AddNodeToNetWithElemType(New<ReconcileDynamicAxisNode<ElemType>>(net.GetDeviceId(), nodeName));
+}
+template <class ElemType>
+template <class InputNodeType>
+shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::CreateCastNode(const std::wstring& nodeName)
+{
+    return net.AddNodeToNetWithElemType(New<CastNode<ElemType, InputNodeType>>(net.GetDeviceId(), nodeName));
 }
 
 // this is the catch-all for all cases not covered as special cases above
@@ -514,6 +581,12 @@ shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::Seque
 }
 
 template <class ElemType>
+shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::LatticeSequenceWithSoftmax(const ComputationNodePtr label, const ComputationNodePtr prediction, const ComputationNodePtr loglikelihood, const ComputationNodePtr lattice, const std::wstring& symListPath, const std::wstring& phonePath, const std::wstring& stateListPath, const std::wstring& transProbPath, const std::wstring& latticeConfigPath, float hSmoothingWeight, float frameDropThresh, bool doReferenceAlign, bool seqGammarUsesMBR, float seqGammarAMF, float seqGammarLMF, float seqGammarBMMIFactor, float seqGammarWordPen, const std::wstring nodeName)
+{
+    return net.AddNodeToNetAndAttachInputs(New<LatticeSequenceWithSoftmaxNode<ElemType>>(net.GetDeviceId(), nodeName, symListPath, phonePath, stateListPath, transProbPath, latticeConfigPath, hSmoothingWeight, frameDropThresh, doReferenceAlign, seqGammarUsesMBR, seqGammarAMF, seqGammarLMF, seqGammarBMMIFactor, seqGammarWordPen), { label, prediction, loglikelihood, lattice });
+}
+
+template <class ElemType>
 shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::ForwardBackward(const ComputationNodePtr graph, const ComputationNodePtr features, int blankTokenId, int delayConstraint, const std::wstring nodeName)
 {
     return net.AddNodeToNetAndAttachInputs(New<ForwardBackwardNode<ElemType>>(net.GetDeviceId(), nodeName, blankTokenId, delayConstraint), { graph, features });
@@ -675,6 +748,18 @@ shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::Sin(c
 }
 
 template <class ElemType>
+shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::Atan(const ComputationNodePtr a, const std::wstring nodeName)
+{
+    return net.AddNodeToNetAndAttachInputs(New<AtanNode<ElemType>>(net.GetDeviceId(), nodeName), { a });
+}
+
+template <class ElemType>
+shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::Tan(const ComputationNodePtr a, const std::wstring nodeName)
+{
+    return net.AddNodeToNetAndAttachInputs(New<TanNode<ElemType>>(net.GetDeviceId(), nodeName), { a });
+}
+
+template <class ElemType>
 shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::Cosh(const ComputationNodePtr a, const std::wstring nodeName)
 {
     return net.AddNodeToNetAndAttachInputs(New<CoshNode<ElemType>>(net.GetDeviceId(), nodeName), { a });
@@ -708,6 +793,12 @@ template <class ElemType>
 shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::Hardmax(const ComputationNodePtr a, const std::wstring nodeName)
 {
     return net.AddNodeToNetAndAttachInputs(New<HardmaxNode<ElemType>>(net.GetDeviceId(), nodeName), { a });
+}
+
+template <class ElemType>
+shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::StraightThrough(const ComputationNodePtr a, const std::wstring nodeName)
+{
+    return net.AddNodeToNetAndAttachInputs(New<StraightThroughNode<ElemType>>(net.GetDeviceId(), nodeName), {a});
 }
 
 template <class ElemType>
@@ -957,5 +1048,50 @@ shared_ptr<ComputationNode<ElemType>> ComputationNetworkBuilder<ElemType>::Batch
 
 template class ComputationNetworkBuilder<float>;
 template class ComputationNetworkBuilder<double>;
+template class ComputationNetworkBuilder<half>;
 
+// V2 allows mixed precision
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<float>::TypedCreateLearnableParameter<float>(const std::wstring& paramName, const TensorShape& tensorShape);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<float>::TypedCreateLearnableParameter<double>(const std::wstring& paramName, const TensorShape& tensorShape);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<float>::TypedCreateLearnableParameter<half>(const std::wstring& paramName, const TensorShape& tensorShape);
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<double>::TypedCreateLearnableParameter<float>(const std::wstring& paramName, const TensorShape& tensorShape);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<double>::TypedCreateLearnableParameter<double>(const std::wstring& paramName, const TensorShape& tensorShape);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<double>::TypedCreateLearnableParameter<half>(const std::wstring& paramName, const TensorShape& tensorShape);
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<half>::TypedCreateLearnableParameter<float>(const std::wstring& paramName, const TensorShape& tensorShape);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<half>::TypedCreateLearnableParameter<double>(const std::wstring& paramName, const TensorShape& tensorShape);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<half>::TypedCreateLearnableParameter<half>(const std::wstring& paramName, const TensorShape& tensorShape);
+
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<float>::TypedCreateInputNode<float>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<float>::TypedCreateInputNode<double>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<float>::TypedCreateInputNode<half>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<double>::TypedCreateInputNode<float>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<double>::TypedCreateInputNode<double>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<double>::TypedCreateInputNode<half>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<half>::TypedCreateInputNode<float>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<half>::TypedCreateInputNode<double>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<half>::TypedCreateInputNode<half>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<float>::TypedCreateSparseInputNode<float>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<float>::TypedCreateSparseInputNode<double>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<float>::TypedCreateSparseInputNode<half>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<double>::TypedCreateSparseInputNode<float>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<double>::TypedCreateSparseInputNode<double>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<double>::TypedCreateSparseInputNode<half>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<half>::TypedCreateSparseInputNode<float>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<half>::TypedCreateSparseInputNode<double>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<half>::TypedCreateSparseInputNode<half>(const std::wstring& inputName, const TensorShape& sampleLayout, const wstring& dynamicAxisName);
+
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<float>::CreateCastNode<half>(const std::wstring& nodeName);
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<float>::CreateCastNode<double>(const std::wstring& nodeName);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<double>::CreateCastNode<half>(const std::wstring& nodeName);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<double>::CreateCastNode<float>(const std::wstring& nodeName);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<half>::CreateCastNode<float>(const std::wstring& nodeName);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<half>::CreateCastNode<double>(const std::wstring& nodeName);
+
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<float>::NewNode2<half>(const std::wstring& nodeName, DEVICEID_TYPE deviceId, const wstring& name);
+template shared_ptr<ComputationNode<float>> ComputationNetworkBuilder<float>::NewNode2<double>(const std::wstring& nodeName, DEVICEID_TYPE deviceId, const wstring& name);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<double>::NewNode2<half>(const std::wstring& nodeName, DEVICEID_TYPE deviceId, const wstring& name);
+template shared_ptr<ComputationNode<double>> ComputationNetworkBuilder<double>::NewNode2<float>(const std::wstring& nodeName, DEVICEID_TYPE deviceId, const wstring& name);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<half>::NewNode2<float>(const std::wstring& nodeName, DEVICEID_TYPE deviceId, const wstring& name);
+template shared_ptr<ComputationNode<half>> ComputationNetworkBuilder<half>::NewNode2<double>(const std::wstring& nodeName, DEVICEID_TYPE deviceId, const wstring& name);
 }}}

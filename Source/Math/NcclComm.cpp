@@ -8,6 +8,7 @@
 #ifdef USE_NCCL
 #include "GPUMatrix.h"
 #include <nccl.h>
+#include <nvml.h>
 #include <cuda_runtime.h>
 
 namespace Microsoft { namespace MSR { namespace CNTK {
@@ -31,49 +32,90 @@ ncclRedOp_t ncclRedOpFromMpiOp(MPI_Op op)
 NcclComm::NcclComm(int deviceId, const MPIWrapperPtr& mpi)
     : m_ncclComm(nullptr), m_stream(nullptr)
 {
+    if (deviceId == CPUDEVICE)
+    {
+        fprintf(stderr, "NcclComm: disabled, at least one rank using CPU device\n");
+        return;
+    }
+
     cudaDeviceSynchronize();
     size_t numRanks = mpi->NumNodesInUse();
-    std::vector<int> allDevs(numRanks);
-    std::vector<std::array<char, MPI_MAX_PROCESSOR_NAME>> allHosts(numRanks);
-    std::array<char, MPI_MAX_PROCESSOR_NAME> procName {};
-    int nameLen;
-    MPI_Get_processor_name(procName.data(), &nameLen);
-    mpi->Allgather(&deviceId, 1, MPI_INT, allDevs.data(), 1, MPI_INT);
-    mpi->Allgather(procName.data(), MPI_MAX_PROCESSOR_NAME, MPI_CHAR, allHosts[0].data(), MPI_MAX_PROCESSOR_NAME, MPI_CHAR);
+
+    auto nvmlRes = nvmlInit();
+    std::array<char, NVML_DEVICE_UUID_BUFFER_SIZE> thisDeviceUUID{ 'C', 'P', 'U', 0 };
+
+    if (nvmlRes != NVML_SUCCESS)
+    {
+        fprintf(stderr, "NcclComm: disabled, failed to initialize NVML library, error code %s\n", nvmlErrorString(nvmlRes));
+    }
+    else
+    {
+        nvmlDevice_t thisDevice;
+        nvmlRes = nvmlDeviceGetHandleByIndex(deviceId, &thisDevice);
+        if (nvmlRes != NVML_SUCCESS)
+        {
+            fprintf(stderr, "NcclComm: disabled, failed to obtain nvmlDevice handle: %s\n", nvmlErrorString(nvmlRes));
+        }
+        else
+        {
+            nvmlRes = nvmlDeviceGetUUID(thisDevice, thisDeviceUUID.data(), thisDeviceUUID.size());
+            if (nvmlRes != NVML_SUCCESS)
+            {
+                fprintf(stderr, "NcclComm: disabled, failed to obtain nvmlDevice UUID: %s\n", nvmlErrorString(nvmlRes));
+            }
+        }
+    }
+    std::vector<std::array<char, NVML_DEVICE_UUID_BUFFER_SIZE>> allDeviceUUIDs(numRanks);
+    mpi->Allgather(thisDeviceUUID.data(), NVML_DEVICE_UUID_BUFFER_SIZE, MPI_CHAR, allDeviceUUIDs[0].data(), NVML_DEVICE_UUID_BUFFER_SIZE, MPI_CHAR);
+
+    std::array<char, NVML_DEVICE_UUID_BUFFER_SIZE> defaultDeviceUUID{ 'C', 'P', 'U', 0 };
+    for (auto deviceUUID : allDeviceUUIDs)
+    {
+        if (deviceUUID == defaultDeviceUUID) {
+            return;
+        }
+    }
 
     for (size_t r = 0; r < numRanks; r++)
     {
-        if (allDevs[r] == CPUDEVICE)
-        {
-            fprintf(stderr, "NcclComm: disabled, at least one rank using CPU device\n");
-            return;
-        }
         for (size_t s = 0; s < r; s++)
         {
-            if (allHosts[r] == allHosts[s] && allDevs[r] == allDevs[s])
+            if (strcmp(allDeviceUUIDs[r].data(), allDeviceUUIDs[s].data()) == 0)
             {
-                fprintf(stderr, "NcclComm: disabled, same device used by more than one rank\n");
+                fprintf(stderr, "NcclComm: disabled, same device %s used by more than one rank\n", allDeviceUUIDs[0].data());
+                nvmlShutdown();
                 return;
             }
         }
     }
+    nvmlShutdown();
 
-    ncclUniqueId ncclId;
+    ncclUniqueId ncclId = {};
     ncclResult_t res;
 
     if (mpi->IsMainNode())
     {
-        res = ncclGetUniqueId(&ncclId);
-        if (res != ncclSuccess)
-            RuntimeError("NcclComm failed to obtain ncclUniqueId: %s", ncclGetErrorString(res));
+        ncclGetUniqueId(&ncclId);
     }
 
     mpi->Bcast(&ncclId, NCCL_UNIQUE_ID_BYTES, MPI_CHAR, 0);
 
+    static const ncclUniqueId emptyNcclId = {};
+    if (memcmp(&ncclId, &emptyNcclId, sizeof(ncclId)) == 0)
+    {
+        fprintf(stderr, "NcclComm failed to obtain ncclUniqueId: %s\n", ncclGetErrorString(res));
+        return;
+    }
+
     PrepareDevice(deviceId);
     res = ncclCommInitRank(&m_ncclComm, numRanks, ncclId, mpi->CurrentNodeRank());
     if (res != ncclSuccess)
-        RuntimeError("NcclComm failed to initialize: %s. Set the ENV \"NCCL_DEBUG=INFO\" for more information.", ncclGetErrorString(res));
+    {
+        fprintf(stderr, "NcclComm failed to initialize: %s. Set the ENV \"NCCL_DEBUG=INFO\" for more information.\n", ncclGetErrorString(res));
+        if (m_ncclComm != nullptr)
+            ncclCommDestroy(m_ncclComm);
+        return;
+    }
 
     cudaStreamCreateWithFlags(&m_stream, cudaStreamDefault)
         || "cudaStreamCreateWithFlags failed";
@@ -104,6 +146,7 @@ void NcclComm::AllReduceImpl(void* inputbuffer, void *outputbuffer, size_t count
         {
             ncclTypes[(int)DataType::FLOAT]  = ncclFloat;
             ncclTypes[(int)DataType::DOUBLE] = ncclDouble;
+            ncclTypes[(int)DataType::HALF] = ncclHalf;
             ncclTypes[(int)DataType::INT]    = ncclInt;
         }
         ncclDataType_t Lookup(DataType dtype)

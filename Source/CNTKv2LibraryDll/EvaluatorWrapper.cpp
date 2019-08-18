@@ -18,18 +18,26 @@ namespace CNTK
         : m_func(model), m_device(device)
     {
         for (const auto arg : m_func->Arguments())
-            m_arguments.insert(make_pair(arg.Name(), arg));
+            m_arguments.insert(make_pair(WStringToString(arg.Name()), arg));
 
         for (const auto arg : m_func->Outputs())
-            m_outputs.insert(make_pair(arg.Name(), arg));
+            m_outputs.insert(make_pair(WStringToString(arg.Name()), arg));
     }
 
-    CNTKEvaluatorWrapper::CNTKEvaluatorWrapper(const wchar_t* modelFilePath, DeviceDescriptor device) :
-        CNTKEvaluatorWrapper(Function::Load(modelFilePath, device), device)
+    CNTKEvaluatorWrapper::CNTKEvaluatorWrapper(const char* modelFilePath, DeviceDescriptor device) :
+        CNTKEvaluatorWrapper(Function::Load(StringToWString(modelFilePath), device), device)
     {}
 
-    CNTKEvaluatorWrapper::CNTKEvaluatorWrapper(const wchar_t* modelFilePath, const wchar_t* device) :
+    CNTKEvaluatorWrapper::CNTKEvaluatorWrapper(const char* modelFilePath, const CNTK_DeviceDescriptor* device) :
         CNTKEvaluatorWrapper(modelFilePath, GetDeviceDescriptor(device))
+    {}
+
+    CNTKEvaluatorWrapper::CNTKEvaluatorWrapper(const void* modelData, int modelDataLen, DeviceDescriptor device) :
+        CNTKEvaluatorWrapper(Function::Load(static_cast<const char*>(modelData), modelDataLen, device), device)
+    {}
+
+    CNTKEvaluatorWrapper::CNTKEvaluatorWrapper(const void* modelData, int modelDataLen, const CNTK_DeviceDescriptor* device) :
+        CNTKEvaluatorWrapper(modelData, modelDataLen, GetDeviceDescriptor(device))
     {}
 
     void CNTKEvaluatorWrapper::GetModelArgumentsInfo(CNTK_Variable** inputs, uint32_t* numInputs)
@@ -85,7 +93,7 @@ namespace CNTK
                 auto buffer = *outputValues[i];
                 auto shape = ToNDShape(buffer.shape);
                 NDShape maskShape = shape.SubShape(var->second.Shape().Rank(), shape.Rank());
-                auto data = make_shared<NDArrayView>(DataType::Float, shape, buffer.data, shape.TotalSize() * sizeof(float), m_device);
+                auto data = make_shared<NDArrayView>(DataType::Float, shape, buffer.data, shape.TotalSize() * sizeof(float), DeviceDescriptor::CPUDevice());
                 value = make_shared<Value>(data, make_shared<NDMask>(maskShape));
             }
             preparedOutputs[var->second] = value;
@@ -111,7 +119,7 @@ namespace CNTK
 
             auto varToValue = preparedOutputs.find(var->second);
             if (varToValue == preparedOutputs.end())
-                RuntimeError("Could not retrieve ouput for variable '%ls'", outputs[i].name);
+                RuntimeError("Could not retrieve ouput for variable '%s'", outputs[i].name);
 
             auto value = varToValue->second;
 
@@ -122,7 +130,13 @@ namespace CNTK
                 v.shape = FromNDShape(value->Shape());
                 auto size = value->Shape().TotalSize();
                 v.data = new float[size];
-                std::copy(value->Data()->DataBuffer<float>(), value->Data()->DataBuffer<float>() + size, v.data);
+                auto data = value->Data();
+                if (value->Device().Type() == DeviceKind::GPU)
+                {
+                    data = std::make_shared<NDArrayView>(DataType::Float, data->Shape(), DeviceDescriptor::CPUDevice());
+                    data->CopyFrom(*(value->Data()));
+                }
+                std::copy(data->DataBuffer<float>(), data->DataBuffer<float>() + size, v.data);
                 result.get()[i] = v;
                 valCleaner.release();
             }

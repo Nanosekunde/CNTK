@@ -35,6 +35,8 @@ Readme text
 *.psm1 text
 *.ps text
 *.i text
+*.cmake text
+*.patch text
 
 *.sh text eol=lf
 *.awk text eol=lf
@@ -65,6 +67,7 @@ Makefile text
 *.asax text
 
 *.h text
+*.hpp text
 *.cpp text
 *.cc text
 *.cu text
@@ -157,5 +160,10 @@ Examples/Extensibility/BinaryConvolution/BinaryConvolutionLib/halide/halide_conv
 Examples/Extensibility/BinaryConvolution/BinaryConvolutionLib/halide/halide_convolve.lib binary
 Examples/Extensibility/BinaryConvolution/BinaryConvolutionLib/halide/halide_convolve_nofeatures.a binary
 Examples/Extensibility/BinaryConvolution/BinaryConvolutionLib/halide/halide_convolve_nofeatures.lib binary
+Tests/EndToEndTests/Speech/Data/mlf2.bin binary
+external/gsl text
+Source/CNTKv2LibraryDll/proto/onnx/onnx_repo text
+Source/CNTKv2LibraryDll/proto/onnx/onnxruntime text
 #certificates
 *.pfx binary
+*.exe binary

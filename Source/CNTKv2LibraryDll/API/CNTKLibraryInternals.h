@@ -41,6 +41,8 @@
 
 // Forward declarations
 namespace Microsoft { namespace MSR { namespace CNTK {
+    struct MatrixBase;
+
     template <typename ElemType>
     class Matrix;
 
@@ -251,13 +253,18 @@ namespace CNTK
         CNTK_API FunctionPtr ReduceElements(const Variable& operand, const std::wstring& reductionOpName, const std::vector<Axis>& axes, bool keepReducedDimensions, const std::wstring& name = L"");
         CNTK_API FunctionPtr CosineDistanceWithNegativeSamples(const Variable& leftOperand, const Variable& rightOperand, const Variable& shiftWindow, const Variable& numberOfNegativeSamples, const std::wstring& name = L"");
         CNTK_API FunctionPtr Convolution(const Variable& convolutionMap, const Variable& operand, const NDShape& strides, const std::vector<bool>& sharing, const std::vector<bool>& autoPadding,
-                                         const NDShape& dilation, bool transpose, const NDShape& outputShape, size_t maxTempMemSizeInSamples, const std::wstring& name = L"");
+                                         const NDShape& dilation, bool transpose, const NDShape& outputShape, size_t groups, size_t maxTempMemSizeInSamples, const std::wstring& name = L"");
+        CNTK_API FunctionPtr Convolution(const Variable& convolutionMap, const Variable& operand, const NDShape& strides, const std::vector<bool>& sharing, const std::vector<size_t>& lowerPad,
+                                         const std::vector<size_t>& upperPad, const NDShape& dilation, bool transpose, const NDShape& outputShape, size_t groups, size_t maxTempMemSizeInSamples, const std::wstring& name = L"");
+        CNTK_API FunctionPtr ConvolutionSequenceShape(const Variable& convolutionMap, const Variable& operand, const NDShape& strides, const std::vector<bool>& sharing, const std::vector<bool>& autoPadding,
+                                                      const NDShape& dilation, bool transpose, const NDShape& outputShape, size_t groups, size_t maxTempMemSizeInSamples, const std::wstring& name = L"");
         CNTK_API FunctionPtr SpatialConvolution(const Variable& convolutionMap, const Variable& operand, const NDShape& strides, const std::vector<bool>& sharing,
                                                 const std::vector<bool>& autoPadding, const NDShape& dilation, size_t maxTempMemSizeInSamples, const std::wstring& name = L"");
-        CNTK_API FunctionPtr GroupConvolution(const Variable& convolutionMap, const Variable& operand, const NDShape& strides, const std::vector<bool>& sharing,
-                                              const std::vector<bool>& autoPadding, const NDShape& dilation, size_t groups, size_t maxTempMemSizeInSamples,
-                                              const std::wstring& name = L"");
-                                         
+        CNTK_API FunctionPtr SpatialConvolutionSequenceShape(const Variable& convolutionMap, const Variable& operand, const NDShape& strides, const std::vector<bool>& sharing,
+                                                             const std::vector<bool>& autoPadding,const NDShape& dilation, size_t maxTempMemSizeInSamples, const std::wstring& name = L"");
+        CNTK_API FunctionPtr MatMul(const Variable& leftOperand, const Variable& rightOperand, const std::wstring& name = L"");
+        CNTK_API FunctionPtr Gemm(const Variable& operandA, const Variable& operandB, const Variable& operandC, float alpha = 1.0, float beta = 1.0, bool transA = false, bool transB = false, const std::wstring& name = L"");
+        CNTK_API FunctionPtr Unsqueeze(const Variable& operand, const std::vector<Axis>& axes, const std::wstring& name = L"");
 
         // This is meant for debugging purposes only and is very likely to be deprecated in the future.
         CNTK_API void SaveAsLegacyModel(const FunctionPtr& rootFunction, const std::wstring& modelFile);
@@ -314,13 +321,21 @@ namespace CNTK
         CNTK_API void DisableProfiler();
         CNTK_API void StopProfiler();
 
+        CNTK_API void EnableNodeTiming();
+        CNTK_API void DisableNodeTimeing();
+
+        CNTK_API void EnableCPUEvalOptimization();
+        CNTK_API void DisableCPUEvalOptimization();
+
+        CNTK_API void SetMPIPackThreshold(size_t packThesholdInBytes);
+        CNTK_API size_t GetMPIPackThreshold();
+
         CNTK_API bool AreEquivalent(const ::CNTK::FunctionPtr& f1, const ::CNTK::FunctionPtr& f2);
         CNTK_API bool AreEquivalent(const ::CNTK::Variable& v1, const ::CNTK::Variable& v2, bool allowParameterAndConstantsEquivalence = false);
 
         CNTK_API bool AreEqual(const ::CNTK::NDArrayView& view1, const ::CNTK::NDArrayView& view2, double relativeTolerance = 0.0, double absoluteTolerance = 0.0);
         CNTK_API bool AreEqual(const ::CNTK::Value& value1, const ::CNTK::Value& value2, double relativeTolerance = 0.0, double absoluteTolerance = 0.0);
 
-        CNTK_API size_t DefaultPackThresholdSizeInBytes();
 
         // This is an internal API, needed for testing.
         CNTK_API Dictionary ToDictionary(const MinibatchSourceConfig& dict);

@@ -65,7 +65,6 @@ public:
 
             // prep for parallel implementation (CUDA)
             parallellattice.setdevice(DeviceId);
-
             if (parallellattice.enabled())                             // send hmm set to GPU if GPU computation enabled
                 parallellattice.entercomputation(m_hset, mbrclassdef); // cache senone2classmap if mpemode
             initialmark = true;
@@ -209,6 +208,7 @@ public:
                                                                    (const msra::math::ssematrixbase&) predstripe, (const msra::asr::simplesenonehmm&) m_hset,
                                                                    (msra::math::ssematrixbase&) dengammasstripe, (msra::math::ssematrixbase&) gammasbuffer /*empty, not used*/,
                                                                    lmf, wp, amf, boostmmifactor, seqsMBRmode, uidsstripe, boundariesstripe);
+
             objectValue += (ElemType)((numavlogp - denavlogp) * numframes);
 
             if (samplesInRecurrentStep == 1)

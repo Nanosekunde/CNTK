@@ -345,7 +345,7 @@ namespace CNTK
             paddedOutputMapCount = NDShape(shapeRank - outputMapCount.Rank(), 1);
 
         paddedOutputMapCount = paddedOutputMapCount.AppendShape(outputMapCount);
-
+        
         if (transpose && (shapeRank > 0) && (paddedOutputMapCount[shapeRank - 1] == NDShape::InferredDimension))  // convolution transpose, the mapCount in depth is derived from operandShape 
         {
             if (operandShape[shapeRank - 1] == NDShape::FreeDimension)
@@ -353,10 +353,13 @@ namespace CNTK
 
             paddedOutputMapCount[shapeRank - 1] = operandShape[shapeRank - 1];
         }
-
+        
         return{ paddedOutputMapCount, kernelShape };
     }
 
+    void SetConvolutionProperties(Dictionary& additionalProperties, const NDShape& strides, const std::vector<bool>& sharing,
+        const std::vector<bool>& autoPadding, const std::vector<size_t>& lowerPad, const std::vector<size_t>& upperPad,
+        const NDShape& dilation, bool sequential, bool transpose, const NDShape& outputShape, size_t groups, size_t maxTempMemSizeInSamples);
 
 
     template <typename SourceElementType, typename TargetElementType>
@@ -566,10 +569,6 @@ namespace CNTK
     std::shared_ptr<std::fstream> GetFstream(const std::wstring& filePath, bool readOnly);
     int GetFileDescriptor(const std::wstring& filePath, bool readOnly);
 
-    std::string ToString(const std::wstring& wstring);
-    std::wstring ToWString(const std::string& string);
-
-
     std::pair<size_t, size_t> GetNumTimeStepsAndSequences(const NDShape& maskShape, size_t numDynamicAxes);
 
     inline size_t ShapeRowColSplitPoint(const NDShape& varShape, bool isSparse, bool noDynamicAxes)
@@ -640,6 +639,8 @@ namespace CNTK
             return m_learners;
         }
 
+        const LearnerPtr& GetMetricAggregatingLearner() const;
+
         std::unordered_set<Parameter> GetParameters() const
         {
             std::unordered_set<Parameter> result;
@@ -664,6 +665,7 @@ namespace CNTK
 
         std::vector<LearnerPtr> m_learners;
         bool m_isDistributed;
+        LearnerPtr m_metricAggregatingLearner;
     };
 
     class Utils
@@ -703,6 +705,9 @@ namespace CNTK
 
         template <typename ElementType>
         static ValuePtr GetValueObjectFromCNTKImplMatrixAndMBLayout(const Variable& var, const Microsoft::MSR::CNTK::ComputationNodeBasePtr& computationNode, const Microsoft::MSR::CNTK::Matrix<ElementType>& matrix, const Microsoft::MSR::CNTK::MBLayoutPtr& layout, bool readOnly = true);
+        
+        template <typename SrcType, typename DstType>
+        static Variable ConvertVariableType(const Variable& stat, bool reverseShape = false, const DeviceDescriptor& computeDevice = DeviceDescriptor::UseDefaultDevice());
     };
 
     template <typename Container>
@@ -742,9 +747,18 @@ namespace CNTK
     template <typename T> //T can be Variable or StreamInfo
     static bool IsAtSweepEnd(const std::unordered_map<T, MinibatchData>& arguments)
     {
+        if (arguments.empty()) return true;
+
         return std::any_of(arguments.begin(), arguments.end(), [](const std::pair<const T, MinibatchData>& kv)
         {
             return kv.second.sweepEnd;
         });
+    }
+
+    // half is V1 ElemType, so specialize here instead of in CNTKLibrary.h
+    template<>
+    inline DataType AsDataType<half>()
+    {
+        return DataType::Float16;
     }
 }

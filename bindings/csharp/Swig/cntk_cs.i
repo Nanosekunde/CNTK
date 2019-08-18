@@ -7,6 +7,26 @@
 
 %include "CNTKManagedCommon.i"
 
+%ignore CNTK::Value::Dispose;
+//This typemap will overwrite the default typemap(typemap(csdestruct, methodname="Dispose", methodmodifiers="public") SWIGTYPE) defined in swigwin-3.0.10\Lib\csharp\csharp.swg
+//to put in our custom dispose logic for the Value class. Note that this logic is specifically for Value class
+//since it directly implements IDisposable interface therefore no need to call base.Dispose.
+//If overwriting methods for a derived class, please follow the typemap defined for derived classes in swigwin-3.0.10\Lib\csharp\csharp.swg, i.e:
+//typemap(csdestruct_derived, methodname="Dispose", methodmodifiers="public") SWIGTYPE
+%typemap(csdestruct, methodname="Dispose", methodmodifiers="public") CNTK::Value {
+    lock(this) {
+      if (swigCPtr.Handle != global::System.IntPtr.Zero) {
+        if (swigCMemOwnBase) {
+          swigCMemOwnBase = false;
+          this.Erase();
+          $imcall;
+        }
+        swigCPtr = new global::System.Runtime.InteropServices.HandleRef(null, global::System.IntPtr.Zero);
+      }
+      global::System.GC.SuppressFinalize(this);
+    }
+  }
+
 %extend CNTK::NDShape {
     // Swig generated .cxx code narrows size_t to unsigned long therefore special dimension values are lost.
     // For example, InferredDimension (value of -1), when passed to Cpp side with Swig generated code, 
@@ -70,12 +90,22 @@
 
     NDArrayView(const NDShape& viewShape, const SparseIndexType* colStarts, const SparseIndexType* rowIndices, const float* nonZeroValues, size_t numNonZeroValues, const DeviceDescriptor& device, bool readOnly = false)
     {
-        return new CNTK::NDArrayView(viewShape, colStarts, rowIndices, nonZeroValues, numNonZeroValues, device, readOnly);
+        return new CNTK::NDArrayView(CNTK::DataType::Float, viewShape, colStarts, rowIndices, nonZeroValues, numNonZeroValues, device, readOnly);
     }
 
     NDArrayView(const NDShape& viewShape, const SparseIndexType* colStarts, const SparseIndexType* rowIndices, const double* nonZeroValues, size_t numNonZeroValues, const DeviceDescriptor& device, bool readOnly = false)
     {
-        return new CNTK::NDArrayView(viewShape, colStarts, rowIndices, nonZeroValues, numNonZeroValues, device, readOnly);
+        return new CNTK::NDArrayView(CNTK::DataType::Double, viewShape, colStarts, rowIndices, nonZeroValues, numNonZeroValues, device, readOnly);
+    }
+
+    NDArrayView(const NDShape& viewShape, const SparseIndexType* colStarts, const SparseIndexType* rowIndices, const int8_t* nonZeroValues, size_t numNonZeroValues, const DeviceDescriptor& device, bool readOnly = false)
+    {
+        return new CNTK::NDArrayView(CNTK::DataType::Int8, viewShape, colStarts, rowIndices, nonZeroValues, numNonZeroValues, device, readOnly);
+    }
+
+    NDArrayView(const NDShape& viewShape, const SparseIndexType* colStarts, const SparseIndexType* rowIndices, const int16_t* nonZeroValues, size_t numNonZeroValues, const DeviceDescriptor& device, bool readOnly = false)
+    {
+        return new CNTK::NDArrayView(CNTK::DataType::Int16, viewShape, colStarts, rowIndices, nonZeroValues, numNonZeroValues, device, readOnly);
     }
 
     static NDArrayViewPtr CNTK::NDArrayView::RandomNormalFloat(const NDShape& shape, double mean, double stdDev, unsigned long seed, const DeviceDescriptor& device)
@@ -90,12 +120,12 @@
 
     static NDArrayViewPtr CNTK::NDArrayView::RandomUniformFloat(const NDShape& shape, double rangeStart, double rangeEnd, unsigned long seed, const DeviceDescriptor& device)
     {
-        return CNTK::NDArrayView::RandomNormal<float>(shape, rangeStart, rangeEnd, seed, device);
+        return CNTK::NDArrayView::RandomUniform<float>(shape, rangeStart, rangeEnd, seed, device);
     }
 
     static NDArrayViewPtr CNTK::NDArrayView::RandomUniformDouble(const NDShape& shape, double rangeStart, double rangeEnd, unsigned long seed, const DeviceDescriptor& device)
     {
-        return CNTK::NDArrayView::RandomNormal<double>(shape, rangeStart, rangeEnd, seed, device);
+        return CNTK::NDArrayView::RandomUniform<double>(shape, rangeStart, rangeEnd, seed, device);
     }
 }
 

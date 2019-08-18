@@ -15,6 +15,7 @@
 #include "Serialization.h"
 #include <fcntl.h>
 #include "PrimitiveFunction.h"
+#include "PrimitiveFunctionAttribute.h"
 #include "RecurrentNodes.h"
 #include "Value.h"
 #include "CompositeFunction.h"
@@ -235,6 +236,24 @@ namespace CNTK
     bool Dictionary::operator!=(const Dictionary& other) const
     {
         return !(*this == other);    
+    }
+
+    void SetConvolutionProperties(Dictionary& additionalProperties, const NDShape& strides, const std::vector<bool>& sharing, 
+        const std::vector<bool>& autoPadding, const std::vector<size_t>& lowerPad, const std::vector<size_t>& upperPad,
+        const NDShape& dilation, bool sequential, bool transpose, const NDShape& outputShape, size_t groups, size_t maxTempMemSizeInSamples)
+    {
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameStrides] = strides;
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameDilation] = dilation;
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameSharing] = AsDictionaryValueVector(sharing);
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameAutoPadding] = AsDictionaryValueVector(autoPadding);
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameSequential] = sequential;
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameLowerPad] = NDShape(lowerPad);
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameUpperPad] = NDShape(upperPad);
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameTranspose] = transpose;
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameOutputShape] = outputShape;
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameKernelShape] = NDShape({0});
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameMaxTempMemSizeInSamples] = maxTempMemSizeInSamples;
+        additionalProperties[PrimitiveFunctionAttribute::AttributeNameGroups] = groups;
     }
 
     std::pair<std::wstring, std::wstring> UidAndNameFromCNTKInternalNodeName(const std::wstring& CNTKInternalNodeName, const PrimitiveOpType& opType)
@@ -462,38 +481,12 @@ namespace CNTK
         mode = mode | O_BINARY;
         fd = _wopen(filePath.c_str(), mode, 0644);
 #else
-        fd = open(ToString(filePath).c_str(), mode, 0644);
+        fd = open(ToLegacyString(ToUTF8(filePath)).c_str(), mode, 0644);
 #endif
         if (fd < 0)
             RuntimeError("Cannot open file '%S' for %s.", filePath.c_str(), (readOnly ? "reading" : "writing"));
 
         return fd;
-    }
-
-    std::string ToString(const std::wstring& wstring)
-    {
-#ifdef _MSC_VER
-        std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
-        return converter.to_bytes(wstring);
-#else
-        const auto length = wstring.length() * sizeof(std::wstring::value_type) + 1;
-        char buf[length];
-        const auto res = std::wcstombs(buf, wstring.c_str(), sizeof(buf));
-        return (res >= 0) ? buf : "";
-#endif
-    }
-
-    std::wstring ToWString(const std::string& string)
-    {
-#ifdef _MSC_VER
-        std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
-        return converter.from_bytes(string);
-#else
-        const auto length = string.length() + 1;
-        wchar_t buf[length];
-        const auto res = std::mbstowcs(buf, string.c_str(),  sizeof(buf));
-        return (res >= 0) ? buf : L"";
-#endif
     }
 
     bool IsFirstOutputOfMultiOutputFunction(const Variable& var)
@@ -754,7 +747,7 @@ namespace CNTK
             if (mask != nullptr)
                 Value::GetSequenceStartsAndLengths(mask, sequenceBeginIndices, sequenceLengths, numDynamicAxes);
 
-            bool hasTruncatedSequences = std::find_if(sequenceBeginIndices.begin(), sequenceBeginIndices.end(), [](const int& val) { return (val < 0); }) != sequenceBeginIndices.end();
+            bool hasTruncatedSequences = std::find_if(sequenceBeginIndices.begin(), sequenceBeginIndices.end(), [](const ptrdiff_t& val) { return (val < 0); }) != sequenceBeginIndices.end();
 
             auto layout = std::make_shared<MBLayout>();
             std::vector<std::pair<size_t, size_t>> placement;
@@ -924,6 +917,50 @@ namespace CNTK
         return GetValueObjectFromCNTKImplMatrixAndMBLayout(varShape, var.DynamicAxes(), matrix, layout, readOnly);
     }
 
+    template <typename SrcType, typename DstType>
+    Variable Utils::ConvertVariableType(const Variable& stat, bool reverseShape, const DeviceDescriptor& computeDevice)
+    {
+        auto value_cpu = stat.GetValue()->DeepClone(computeDevice.CPUDevice(), true);
+        auto srcData = value_cpu->DataBuffer<SrcType>();
+
+        auto totalSize = stat.Shape().TotalSize();
+
+        //TODO: Consider using a vector/unique_ptr here to avoid potential memory leaks
+        DstType *dstData = new DstType[totalSize];
+
+        for (size_t index = 0; index < totalSize; index++)
+        {
+            dstData[index] = (DstType)(srcData[index]);
+        }
+
+        NDShape shape = stat.Shape();
+        if (reverseShape)
+        {
+            vector<size_t> shapeDims = shape.Dimensions();
+            std::reverse(shapeDims.begin(), shapeDims.end());
+            shape = shapeDims;
+        }
+
+        NDArrayViewPtr dstFinal(MakeSharedObject<NDArrayView>(AsDataType<DstType>(), shape, &dstData[0],
+            totalSize * sizeof(DstType), computeDevice.CPUDevice()));
+
+        if (computeDevice.Type() == DeviceKind::CPU)
+        {
+            Constant constantVariable(dstFinal);
+            return constantVariable;
+        }
+        else
+        {
+            NDArrayViewPtr dstFinalGPU(MakeSharedObject<NDArrayView>(AsDataType<DstType>(), StorageFormat::Dense, shape, computeDevice));
+            dstFinalGPU->CopyFrom(*dstFinal);
+            Constant constantVariable(dstFinalGPU);
+            return constantVariable;
+        }
+    }
+
+    template Variable Utils::ConvertVariableType<float, float16>(const Variable& stat, bool reverseShape, const DeviceDescriptor& computeDevice);
+    template Variable Utils::ConvertVariableType<float16, float>(const Variable& stat, bool reverseShape, const DeviceDescriptor& computeDevice);
+
     std::vector<Axis> GetSqueezableAxes(const NDShape& inputShape)
     {
         std::vector<Axis> axes;
@@ -978,9 +1015,9 @@ namespace CNTK
     NDShape GetSqueezedShape(const NDShape& inputShape, const Dictionary& squeezeConfig)
     {
         // collect all indices that need to be squeezed
-        if (squeezeConfig.Contains(PrimitiveFunction::AttributeNameAxisVec))
+        if (squeezeConfig.Contains(PrimitiveFunctionAttribute::AttributeNameAxisVec))
         {
-            auto axes = AsVector<Axis>(squeezeConfig[PrimitiveFunction::AttributeNameAxisVec].Value<std::vector<DictionaryValue>>());
+            auto axes = AsVector<Axis>(squeezeConfig[PrimitiveFunctionAttribute::AttributeNameAxisVec].Value<std::vector<DictionaryValue>>());
             return GetSqueezedShape(inputShape, axes);
         }
         else
@@ -1055,6 +1092,7 @@ namespace CNTK
     Learners::Learners(const std::vector<LearnerPtr>& learners) :
         m_learners(learners),
         m_isDistributed(false),
+        m_metricAggregatingLearner(nullptr),
         DoAggregateMetricsIfNeededLambda(nullptr)
     {
         if (learners.empty())
@@ -1068,10 +1106,24 @@ namespace CNTK
             {
                 m_isDistributed = true;
 
-                // When only 1 distributed learner is present, enable the lambda. This is used to correctly report loss and eval in BMUF learner case.
-                // Todo : Reconsider this design of working with only 1 distributed learner.
+                // If this is the only learner, set it as the MetricAggregator
+                // so that the user does not need to explicitly mark it.
                 if (m_learners.size() == 1)
                 {
+                    distLearner->SetAsMetricAggregator();
+                }
+                else
+                {
+                    if (dynamic_pointer_cast<QuantizedDistributedCommunicator>(distLearner->GetCommunicator()) != nullptr)
+                    {
+                        InvalidArgument("Learners with QuantizedDistributedCommunicator is not supported in a multiple learner distributed training scenarios.");
+                    }
+                }
+
+                // Use only one of the learners marked as MetricAggregator to aggregate loss and eval.
+                if (distLearner->IsMetricAggregator())
+                {
+                    m_metricAggregatingLearner = learner;
                     DoAggregateMetricsIfNeededLambda = std::bind(&DistributedLearner::DoAggregateMetricsIfNeeded, distLearner, std::placeholders::_1, std::placeholders::_2);
                 }
             }
@@ -1085,6 +1137,11 @@ namespace CNTK
             }
         }
 
+        if (!m_metricAggregatingLearner)
+        {
+            m_metricAggregatingLearner = m_learners.front();
+        }
+
         if (m_isDistributed)
             CheckDistributedLearners();
     }
@@ -1096,6 +1153,18 @@ namespace CNTK
             if (dynamic_pointer_cast<DistributedLearner>(learner) == nullptr)
                 InvalidArgument("Cannot use a non-distributed learner for some parameters together with a distributed learner for other parameters, in a single Trainer.");
         }
+
+        size_t distributeAfter = dynamic_pointer_cast<DistributedLearner>(m_learners.front())->ParallelizationAfter();
+        for (const auto& learner : m_learners)
+        {
+            if (distributeAfter != dynamic_pointer_cast<DistributedLearner>(learner)->ParallelizationAfter())
+                InvalidArgument("All distributed learners need to have the same DistributeAfterSamples limit.");
+        }
+    }
+
+    const LearnerPtr& Learners::GetMetricAggregatingLearner() const
+    {
+        return m_metricAggregatingLearner;
     }
 
     void Learners::GetLearnerGradients(LearnerPtr learner, const std::unordered_map<Parameter, NDArrayViewPtr>& allGradients, std::unordered_map<Parameter, NDArrayViewPtr>& learnerGradients)
@@ -1128,32 +1197,43 @@ namespace CNTK
         std::vector<MinibatchInfo> mbInfoPerLearner;
         mbInfoPerLearner.resize(m_learners.size());
 
+        MinibatchInfo tmpMinibatchInfo{
+            minibatch.atEndOfData,
+            minibatch.atEndOfSweep,
+            minibatch.numberOfSamples,
+            minibatch.trainingLossValue->DeepClone(),
+            minibatch.evalCriterionValue->DeepClone() };
+
+        bool metricAggregatorUpdated = false;
         bool anyUpdatesPerformed = false;
+        size_t metricAggregatorIndex = 0;
         for (size_t i = 0; i < m_learners.size(); i++)
         {
             auto l  = m_learners[i];
-            mbInfoPerLearner[i] = minibatch;
-
             auto learner = dynamic_pointer_cast<DistributedLearner>(l);
             assert(learner != nullptr); // Already checked in the constructor.
+
+            if (learner->IsMetricAggregator())
+            {
+                mbInfoPerLearner[i] = minibatch;
+                metricAggregatorUpdated = true;
+                metricAggregatorIndex = i;
+            }
+            else
+            {
+                mbInfoPerLearner[i] = tmpMinibatchInfo;
+            }
 
             std::unordered_map<Parameter, NDArrayViewPtr> learnerGradients;
             GetLearnerGradients(learner, gradientValues, learnerGradients);
             anyUpdatesPerformed |= learner->Update(learnerGradients, mbInfoPerLearner[i]);
         }
+        if (!metricAggregatorUpdated)
+            RuntimeError("Update failed: Metric aggregation did not happen, none of the learners was marked as metric aggregator.");
 
-        minibatch = mbInfoPerLearner.front();
-
-        // Checking that progress on the global timeline performed equally.
-        // This will currently prohibit usage of BlockMomentum with Simple/1Bit,
-        // but 1Bit and Simple can be used together.
-        for (size_t i = 1; i < mbInfoPerLearner.size(); i++)
-        {
-            auto mbInfo = mbInfoPerLearner[i];
-            if (minibatch.numberOfSamples != mbInfo.numberOfSamples)
-                RuntimeError("Combining distributed learners with different methods"
-                    " for aggregation minibatch sample count is currently not supported");
-        }
+        // In a single trainer, the number of samples should be same for each learner. 
+        // Assign the minibatch to the information from the matrix aggregating learner. 
+        minibatch = mbInfoPerLearner[metricAggregatorIndex];
         return anyUpdatesPerformed;
     }
 
@@ -1178,12 +1258,15 @@ namespace CNTK
 
     template std::pair<std::shared_ptr<const Matrix<float>>, MBLayoutPtr> Utils::GetCNTKImplMatrixAndMBLayoutFromValueObject<float>(const Variable& var, const ValuePtr& value, NDShape* inferredVarShape);
     template std::pair<std::shared_ptr<const Matrix<double>>, MBLayoutPtr> Utils::GetCNTKImplMatrixAndMBLayoutFromValueObject<double>(const Variable& var, const ValuePtr& value, NDShape* inferredVarShape);
+    template std::pair<std::shared_ptr<const Matrix<half>>, MBLayoutPtr> Utils::GetCNTKImplMatrixAndMBLayoutFromValueObject<half>(const Variable& var, const ValuePtr& value, NDShape* inferredVarShape);
 
     template ValuePtr Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout<float>(const NDShape& sampleShape, const std::vector<Axis>& sampleDynamicAxes, const Matrix<float>& matrix, const MBLayoutPtr& layout, bool readOnly /*= true*/);
     template ValuePtr Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout<double>(const NDShape& sampleShape, const std::vector<Axis>& sampleDynamicAxes, const Matrix<double>& matrix, const MBLayoutPtr& layout, bool readOnly /*= true*/);
+    template ValuePtr Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout<half>(const NDShape& sampleShape, const std::vector<Axis>& sampleDynamicAxes, const Matrix<half>& matrix, const MBLayoutPtr& layout, bool readOnly /*= true*/);
 
     template ValuePtr Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout<float>(const Variable& var, const ComputationNodeBasePtr& computationNode, const Matrix<float>& matrix, const MBLayoutPtr& layout, bool readOnly /*= true*/);
     template ValuePtr Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout<double>(const Variable& var, const ComputationNodeBasePtr& computationNode, const Matrix<double>& matrix, const MBLayoutPtr& layout, bool readOnly /*= true*/);
+    template ValuePtr Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout<half>(const Variable& var, const ComputationNodeBasePtr& computationNode, const Matrix<half>& matrix, const MBLayoutPtr& layout, bool readOnly /*= true*/);
 
     void Accumulator::Update(const ValuePtr& delta, const DeviceDescriptor& device)
     {
@@ -1206,8 +1289,10 @@ namespace CNTK
 
         if (delta->GetDataType() == DataType::Float)
             Data()->GetWritableTensorView<float>()->AddCopyOf(*delta->Data()->GetTensorView<float>());
-        else
+        else if(delta->GetDataType() == DataType::Double)
             Data()->GetWritableTensorView<double>()->AddCopyOf(*delta->Data()->GetTensorView<double>());
+        else
+            RuntimeError("Unexpected data type in accumulator");
 
         if (copied && m_numUpdates != 0)
             RuntimeError("Accumulation values are created when accumulated num updates not zero");
@@ -1228,8 +1313,10 @@ namespace CNTK
 
         if (GetDataType() == DataType::Float)
             Data()->SetValue(0.0f);
-        else
+        else if (GetDataType() == DataType::Double)
             Data()->SetValue(0.0);
+        else
+            RuntimeError("Unsupported data type in Accumulator");
     }
 
     std::wstring DynamicAxesAsString(const std::vector<Axis>& axes, bool rowMajor)

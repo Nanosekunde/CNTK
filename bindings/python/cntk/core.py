@@ -39,7 +39,7 @@ class NDArrayView(cntk_py.NDArrayView):
 
     Args:
         shape (tuple): shape of the data
-        data_type (np.float32, np.float64): data type of the data
+        data_type (np.float32, np.float64, np.float16): data type of the data
         device (:class:`~cntk.device.DeviceDescriptor`): device this value
          should be put on
 
@@ -197,8 +197,8 @@ class NDArrayView(cntk_py.NDArrayView):
             >>> np_sliced = sliced.asarray()
             >>> # Result is an array of shape (2, 3)
             >>> print(np_sliced)
-            [[ 10.  20.  30.]
-             [ 40.  50.  60.]]
+            [[10. 20. 30.]
+             [40. 50. 60.]]
 
         Args:
           start_offset (tuple or list): shape of the same rank as this Value
@@ -252,7 +252,7 @@ class Value(cntk_py.Value):
           * a pure Python structure (list of lists, ...),
           * a list of NumPy arrays or SciPy sparse CSR matrices
           * a :class:`~cntk.core.Value` object (e.g. returned by :func:`one_hot`)
-        seq_starts (list of `bool`\ s or None): if None, every sequence is
+        seq_starts (list of `bool`\\ s or None): if None, every sequence is
          treated as a new sequence. Otherwise, it is interpreted as a list of
          Booleans that tell whether a sequence is a new sequence (`True`) or a
          continuation of the sequence in the same slot of the previous
@@ -343,7 +343,7 @@ class Value(cntk_py.Value):
                 raise ValueError('could not convert sample data to '
                                     'NumPy array')
 
-        elif sample.dtype in (np.float32, np.float64):
+        elif sample.dtype in (bool, np.float32, np.float64, np.float16):
             if sample.dtype != var.dtype:
                 convert_to_var_dtype = True
 
@@ -351,7 +351,7 @@ class Value(cntk_py.Value):
             convert_to_var_dtype = True
 
         else:
-            raise ValueError('only integer, float32 and float64 are '
+            raise ValueError('only integer, bool, float32, float64 and float16 are '
                              'supported, you gave %s' % sample.dtype)
 
         if convert_to_var_dtype:
@@ -378,7 +378,7 @@ class Value(cntk_py.Value):
               * a single NumPy array denoting the full minibatch
               * a list of NumPy arrays or SciPy sparse CSR matrices
               * a single NumPy array denoting one parameter or constant
-            seq_starts (list of `bool`\ s or None): if None, every sequence is
+            seq_starts (list of `bool`\\ s or None): if None, every sequence is
              treated as a new sequence. Otherwise, it is interpreted as a list of
              Booleans that tell whether a sequence is a new sequence (`True`) or a
              continuation of the sequence in the same slot of the previous
@@ -484,11 +484,9 @@ class Value(cntk_py.Value):
             >>> z = C.times(i0, np.eye(num_classes))
             >>> value = C.Value.one_hot(sparse_indices, num_classes)
             >>> z.eval({i0: value})
-            [array([[ 0.,  1.,  0.,  0.,  0.,  0.],
-                    [ 0.,  0.,  0.,  0.,  0.,  0.],
-                    [ 0.,  0.,  0.,  0.,  0.,  1.]], dtype=float32),
-             array([[ 0.,  0.,  0.,  0.,  1.,  0.]], dtype=float32)]
-            <BLANKLINE>
+            [array([[0., 1., 0., 0., 0., 0.],
+                   [0., 0., 0., 0., 0., 0.],
+                   [0., 0., 0., 0., 0., 1.]], dtype=float32), array([[0., 0., 0., 0., 1., 0.]], dtype=float32)]
             >>> num_classes = 6
             >>> sample_shape = (2, num_classes)
             >>> sparse_indices = [[1,5,3,2],[4,1]]
@@ -519,7 +517,7 @@ class Value(cntk_py.Value):
             batch (list of lists of integers): batch input data of indices
             sample_shape (int or tuple): number of classes or shape of each
              sample whose trailing axis is one_hot
-            dtype (`np.float32`, `np.float64`, default None): data type
+            dtype (`np.float32`, `np.float64`, `np.float16`, default None): data type
             device (:class:`~cntk.device.DeviceDescriptor`, default None): device
              this value should be put on
 
@@ -561,6 +559,9 @@ class Value(cntk_py.Value):
                 sample_shape, batch, device, False)
         elif dtype == np.float64:
             value = cntk_py.Value.create_one_hot_double(
+                sample_shape, batch, device, False)
+        elif dtype == np.float16:
+            value = cntk_py.Value.create_one_hot_float16(
                 sample_shape, batch, device, False)
         if remove_sequence_axis:  # added an axis that we should strip again now
             shape = (len(batch),) + sample_shape

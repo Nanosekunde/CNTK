@@ -151,6 +151,7 @@ public:
     using Base::Buffer;
     using Base::GetNumRows;
     using Base::GetNumCols;
+    using Base::GetDiagSize;
     using Base::GetNumElements;
     using Base::OwnBuffer;
     using Base::GetFormat;
@@ -207,6 +208,9 @@ public:
 
     void ChangeDeviceTo(DEVICEID_TYPE to_id);
 
+    template<class ElemType2>
+    void CastAssignValuesOf(const GPUMatrix<ElemType2>* other);
+
 public:
     GPUMatrix<ElemType> ColumnSlice(size_t startColumn, size_t numCols) const;
     GPUMatrix<ElemType>& AssignColumnSlice(const GPUMatrix<ElemType>& fromMatrix, size_t startColumn, size_t numCols);
@@ -242,7 +246,9 @@ public:
                      const bool needAveMultiplier,
                      const bool initialized);
 
-    void AdaDelta(GPUMatrix<ElemType>& gradients, GPUMatrix<ElemType>& functionValues, ElemType learningRate, ElemType rho, ElemType epsilon);
+    template<typename GradType>
+    void AdaDelta(GPUMatrix<GradType>& gradients, GPUMatrix<ElemType>& functionValues, ElemType learningRate, ElemType rho, ElemType epsilon);
+
     void AdaDeltaFlushTimestamps(size_t cols, ElemType rho, int* timestamps, int currentTimestamp);
 
     void Reshape(const size_t numRows, const size_t numCols);
@@ -286,13 +292,13 @@ public:
 
     GPUMatrix<ElemType>& AssignOneHot(const GPUMatrix<ElemType>& a, vector<size_t>& shape, size_t axis);
     GPUMatrix<ElemType>& GatherFromTarget(const GPUMatrix<ElemType>& indices, const GPUMatrix<ElemType>& target, size_t row_elements);
-    GPUMatrix<ElemType>& ScatterToIndices(const GPUMatrix<ElemType>& values, const GPUMatrix<ElemType>& indices, size_t row_elements);
+    GPUMatrix<ElemType>& ScatterToIndices(const GPUMatrix<ElemType>& values, const GPUMatrix<ElemType>& indices, size_t row_elements, const GPUMatrix<char>* mask = nullptr);
 
     GPUMatrix<ElemType> Transpose() const;
     GPUMatrix<ElemType>& AssignTransposeOf(const GPUMatrix<ElemType>& a);
 
     GPUMatrix<ElemType>& DoGatherColumnsOf (ElemType beta, const GPUMatrix<ElemType>& idx, const GPUMatrix<ElemType>& a, ElemType alpha);
-    GPUMatrix<ElemType>& DoScatterColumnsOf(ElemType beta, const GPUMatrix<ElemType>& idx, const GPUMatrix<ElemType>& a, ElemType alpha);
+    GPUMatrix<ElemType>& DoScatterColumnsOf(ElemType beta, const GPUMatrix<ElemType>& idx, const GPUMatrix<ElemType>& a, ElemType alpha, bool idxHaveDups);
 
     GPUMatrix<ElemType>& operator+=(const ElemType alpha);
     GPUMatrix<ElemType> operator+(const ElemType alpha) const;
@@ -385,11 +391,17 @@ public:
     GPUMatrix<ElemType>& InplaceNegativeSine();
     GPUMatrix<ElemType>& AssignNegativeSineOf(const GPUMatrix<ElemType>& a);
 
+    GPUMatrix<ElemType>& InplaceTan();
+    GPUMatrix<ElemType>& AssignTanOf(const GPUMatrix<ElemType>& a);
+
     GPUMatrix<ElemType>& InplaceAcos();
     GPUMatrix<ElemType>& AssignAcosOf(const GPUMatrix<ElemType>& a);
 
     GPUMatrix<ElemType>& InplaceAsin();
     GPUMatrix<ElemType>& AssignAsinOf(const GPUMatrix<ElemType>& a);
+
+    GPUMatrix<ElemType>& InplaceAtan();
+    GPUMatrix<ElemType>& AssignAtanOf(const GPUMatrix<ElemType>& a);
 
     GPUMatrix<ElemType>& InplaceCosh();
     GPUMatrix<ElemType>& AssignCoshOf(const GPUMatrix<ElemType>& a);
@@ -528,12 +540,15 @@ public:
     void AveragePoolingForward(const GPUMatrix<int>& mpRowCol, const GPUMatrix<int>& mpRowIndices, const GPUMatrix<int>& indices, GPUMatrix<ElemType>& output) const;
     void AveragePoolingBackward(const GPUMatrix<int>& mpRowCol, const GPUMatrix<int>& mpRowIndices, const GPUMatrix<int>& indices, GPUMatrix<ElemType>& grad, bool accumulateGradient) const;
 
-    void BatchNormalizationForward(const GPUMatrix<ElemType>& scale, const GPUMatrix<ElemType>& bias, bool inferenceOnly, double expAvgFactor, double blendFactor,
-                                   GPUMatrix<ElemType>& runMean, GPUMatrix<ElemType>& runVariance, GPUMatrix<ElemType>& out, double epsilon,
-                                   GPUMatrix<ElemType>& saveMean, GPUMatrix<ElemType>& saveInvStdDev) const;
-    void BatchNormalizationBackward(const GPUMatrix<ElemType>& in, GPUMatrix<ElemType>& grad, const GPUMatrix<ElemType>& scale, double blendFactor,
-                                    const GPUMatrix<ElemType>& saveMean, const GPUMatrix<ElemType>& saveInvStdDev,
-                                    GPUMatrix<ElemType>& scaleGrad, GPUMatrix<ElemType>& biasGrad) const;
+    template<class StatType>
+    void BatchNormalizationForward(const GPUMatrix<StatType>& scale, const GPUMatrix<StatType>& bias, bool inferenceOnly, double expAvgFactor, double blendFactor,
+                                   GPUMatrix<StatType>& runMean, GPUMatrix<StatType>& runVariance, GPUMatrix<ElemType>& out, double epsilon,
+                                   GPUMatrix<StatType>& saveMean, GPUMatrix<StatType>& saveInvStdDev) const;
+
+    template<class StatType>
+    void BatchNormalizationBackward(const GPUMatrix<ElemType>& in, GPUMatrix<ElemType>& grad, const GPUMatrix<StatType>& scale, double blendFactor,
+                                    const GPUMatrix<StatType>& saveMean, const GPUMatrix<StatType>& saveInvStdDev,
+                                    GPUMatrix<StatType>& scaleGrad, GPUMatrix<StatType>& biasGrad) const;
 
     // RNN support functions
     void RNNForward(const GPUMatrix<ElemType>& inputX, const GPUMatrix<ElemType>& paramW, size_t xDim, size_t yDim, const vector<size_t>& numSequencesForFrame, const struct RnnAttributes& rnnAttributes, GPUMatrix<ElemType>& reserve, GPUMatrix<ElemType>& workspace);
@@ -568,6 +583,7 @@ public:
     static void InnerProduct(const GPUMatrix<ElemType>& a, const GPUMatrix<ElemType>& b, GPUMatrix<ElemType>& c, const bool isColWise);
     static ElemType InnerProductOfMatrices(const GPUMatrix<ElemType>& a, const GPUMatrix<ElemType>& b);
     static void ElementWisePower(ElemType alpha, const GPUMatrix<ElemType>& a, GPUMatrix<ElemType>& c);
+    static void BatchMatMul(ElemType beta, const GPUMatrix<ElemType>& a, const bool transposeA, const int m, const GPUMatrix<ElemType>& b, const bool transposeB, const int n, GPUMatrix<ElemType>& c, const bool isColWise);
 
     static bool AreEqual(const GPUMatrix<ElemType>& a, const GPUMatrix<ElemType>& b, const ElemType threshold = 1e-8);
 

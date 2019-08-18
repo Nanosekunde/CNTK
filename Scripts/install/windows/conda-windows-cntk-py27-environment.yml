@@ -6,9 +6,10 @@ channels:
 dependencies:
 - enum34=1.1.6=py27_0
 - h5py=2.6.0=np111py27_2
+- pyqt=5.6.0=py27h6e61f57_6
 - imageio=2.2.0=py27_0
 - jupyter=1.0.0=py27_3
-- matplotlib=1.5.3=np111py27_0
+- matplotlib=2.0.0=np111py27_0
 - mock=2.0.0=py27_0
 - numpy=1.11.2=py27_0
 - pandas=0.19.1=np111py27_0

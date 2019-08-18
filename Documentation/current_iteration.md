@@ -1,20 +1,19 @@
-# CNTK v2.4 Release Notes
+# CNTK Current Iteration
 
-## Highlights of this Release
-- Move to CUDA9, cuDNN 7 and Visual Studio 2017.
-- Support Volta GPU and FP16.
-- Better ONNX support.
-- CPU perf improvement.
-- More OPs.
+## Highlights of this release
+* Moved to CUDA 10 for both Windows and Linux.
+* Support advance RNN loop in ONNX export.
+* Export larger than 2GB models in ONNX format.
 
-## OPs
-- ``top_k`` operation: in the forward pass it computes the top (largest) k values and corresponding indices along the specified axis. In the backward pass the gradient is scattered to the top k elements (an element not in the top k gets a zero gradient).
-- ``gather`` operation now supports an axis argument
-- ``squeeze`` and ``expand_dims`` operations for easily removing and adding singleton axes
-- ``zeros_like`` and ``ones_like`` operations. In many situations you can just rely on CNTK correctly broadcasting a simple 0 or 1 but sometimes you need the actual tensor.
+## CNTK support for CUDA 10
 
-## ONNX
-- Improved ONNX support in CNTK.
-- Update ONNX to the latest ONNX from https://github.com/onnx/onnx
-- Fixed several bugs.
+CNTK now supports CUDA 10. This requires an update to build environment to Visual Studio 2017 v15.9 for Windows.
 
+To setup build and runtime environment on Windows:
+* Install [Visual Studio 2017](https://www.visualstudio.com/downloads/). Note: going forward for CUDA 10 and beyond, it is no longer required to install and run with the specific VC Tools version 14.11.
+* Install [Nvidia CUDA 10](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64)
+* From PowerShell, run:
+    [DevInstall.ps1](../Tools/devInstall/Windows/DevInstall.ps1)
+* Start Visual Studio 2017 and open [CNTK.sln](./CNTK.sln).
+
+To setup build and runtime environment on Linux using docker, please build Unbuntu 16.04 docker image using Dockerfiles [here](./Tools/docker). For other Linux systems, please refer to the Dockerfiles to setup dependent libraries for CNTK.

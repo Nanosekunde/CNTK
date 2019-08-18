@@ -25,7 +25,7 @@ script_under_test = os.path.join(example_dir, "HTK_LSTM_Truncated_Distributed.py
 
 mpiexec_params = [ "-n", "2"]
 
-def test_htk_lstm_truncated_distributed_1bitsgd(device_id):
+def test_htk_lstm_truncated_distributed_gpu(device_id):
     params = [ "-n", "3",
                "-datadir", an4_dataset_directory(),
                "-q", "1",
@@ -45,7 +45,7 @@ def test_htk_lstm_truncated_distributed_block_momentum(device_id):
     mpiexec_test(device_id, script_under_test, mpiexec_params, params, 0.76, False, 4)
 
 
-def test_htk_lstm_truncated_distributed_1bitsgd_with_cv(device_id):
+def test_htk_lstm_truncated_distributed_gpu_with_cv(device_id):
     # Make sure that full sequence cross validation
     # works in the middle of bptt training
     params = [ "-n", "2",
@@ -57,6 +57,6 @@ def test_htk_lstm_truncated_distributed_1bitsgd_with_cv(device_id):
                "-device", str(device_id) ]
 
     output = mpiexec_execute(device_id=device_id, script=script_under_test, mpiexec_params=mpiexec_params, params=params)
-    results = re.findall("Finished Evaluation \[.+?\]: Minibatch\[.+?\]: metric = (.+?)%", output)
+    results = re.findall(r"Finished Evaluation \[.+?\]: Minibatch\[.+?\]: metric = (.+?)%", output)
     assert len(results) == 6, output
 
